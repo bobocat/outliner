@@ -5,7 +5,7 @@
   offline when opened directly in a browser on Windows.
 
   File format: .otl  (Outline Note) — one UTF-8 JSON document.
-  Derived from the barBeeQ.mpl schema (Absolute Database / MainTable) but
+  Derived from the .mpl schema (Absolute Database / MainTable) but
   flattened into human-readable nested JSON:
 
       mpl  Node_AUTOINC  -> id
@@ -19,7 +19,7 @@
   {
     "format": "otl-outline",
     "version": 1,
-    "meta":   { "title": "barBeeQ", "modified": "ISO-8601" },
+    "meta":   { "title": "My notes", "modified": "ISO-8601" },
     "tree":   [ { id, title, icon, marked, expanded, body, children:[…] } ]
   }
 -->
@@ -243,6 +243,13 @@
   .edivide{ width:1px; height:20px; background:var(--rule-2); margin:0 6px; }
   .etoolbar .grow{ flex:1; }
   .wcount{ font-family:var(--mono); font-size:11px; color:#9a9385; }
+  /* editor save-state indicator: teal dot = saved, amber dot = unsaved */
+  .savestate{ display:inline-flex; align-items:center; gap:6px;
+    font-family:var(--mono); font-size:11px; color:#9a9385; transition:color .15s; }
+  .savestate .sdot{ width:7px; height:7px; border-radius:50%; flex:none;
+    background:var(--mark); box-shadow:0 0 0 3px rgba(47,158,140,.15); transition:background .15s, box-shadow .15s; }
+  .savestate.dirty{ color:var(--signal-ink); font-weight:600; }
+  .savestate.dirty .sdot{ background:var(--signal); box-shadow:0 0 0 3px rgba(226,129,47,.18); }
 
   .scroll{ flex:1; overflow:auto; min-height:0; }
   .scroll::-webkit-scrollbar{ width:12px; }
@@ -406,7 +413,7 @@
     <div class="spacer"></div>
     <div class="filechip">
       <span class="dot" id="stateDot"></span>
-      <span class="fname" id="fileName">barBeeQ.otl</span>
+      <span class="fname" id="fileName">untitled.otl</span>
       <span id="fileState">saved</span>
     </div>
   </div>
@@ -459,6 +466,10 @@
         </div>
         <div class="edivide"></div>
         <span class="wcount" id="wcount">0 words</span>
+        <div class="edivide"></div>
+        <span class="savestate" id="saveState" title="Unsaved changes are shown here until you Save (Ctrl+S)">
+          <span class="sdot"></span><span class="slabel">Saved</span>
+        </span>
       </div>
       <div class="scroll">
         <div class="sheet">
@@ -498,7 +509,7 @@
     <pre><span class="k">{</span>
   <span class="s">"format"</span>: <span class="s">"otl-outline"</span>,
   <span class="s">"version"</span>: 1,
-  <span class="s">"meta"</span>: <span class="k">{</span> <span class="s">"title"</span>: <span class="s">"barBeeQ"</span> <span class="k">}</span>,
+  <span class="s">"meta"</span>: <span class="k">{</span> <span class="s">"title"</span>: <span class="s">"My notes"</span> <span class="k">}</span>,
   <span class="s">"tree"</span>: <span class="k">[</span>
     <span class="k">{</span>
       <span class="s">"id"</span>: <span class="s">"n_code"</span>,
@@ -522,7 +533,7 @@
 
 <script>
 /* ============================ seed document ============================ */
-/* Titles are the real barBeeQ project notes pulled from the .mpl file.    */
+/* Boots to a blank outline; use Open/Import to load real content.         */
 let uid = 0;
 const nid = () => "n" + (++uid);
 
@@ -531,92 +542,14 @@ function N(title, icon, body, children, marked){
            expanded:false, body:body||"", children:children||[] };
 }
 
-const tweakBody =
-  '<p><b>math problem</b></p>' +
-  '<ul><li>remap 0–2 to another range of values</li>' +
-  '<li><span class="mono">newComplexity = origComplexity * tweakValue * multiplier</span></li></ul>' +
-  '<p><b>Objective</b></p>' +
-  '<p>I want the <b>influence</b> value to be the amount of influence that the ' +
-  '<span class="mono">tweakValue</span> has on the final result.</p>' +
-  '<ul>' +
-  '<li><span class="mono">origComplexity</span> = set in the spreadsheet (e.g. 3.5)</li>' +
-  '<li><span class="mono">tweakValue</span> = a number from the tweak slider, 0–1 or 0–2, can be zero</li>' +
-  '<li><span class="mono">influence</span> = how much the tweak affects the result. ' +
-  '0 = no influence, 1 = 100%, 2 = 200%</li>' +
-  '<li><span class="mono">newComplexity</span> = origComplexity shaped by influence — <b>never</b> zero</li>' +
-  '</ul>' +
-  '<p><b>Worked cases</b> &nbsp;(origComplexity = 3.5)</p>' +
-  '<p><span class="indent">tweak 2, influence 1 → newComplexity 7</span>' +
-  '<span class="indent">tweak 2, influence 0 → newComplexity 3.5</span>' +
-  '<span class="indent">tweak 2, influence 2 → newComplexity 7</span>' +
-  '<span class="indent">tweak 1, influence 0 → newComplexity 3.5</span></p>' +
-  '<p><span class="mono">origComplexity * tweakValue * influence</span> doesn\'t work.</p>';
-
 const doc = {
   format:"otl-outline", version:1,
-  meta:{ title:"barBeeQ" },
+  meta:{ title:"untitled", font:"system" },
   tree:[
-    N("barBeeQ","folder",
-      '<p>VR project journal. Master tree — every meeting, code note and setup guide hangs off this root.</p>',
-      [
-        N("code","folder","<p>Programming notes and strategy.</p>",[
-          N("code notes","doc","<p>Running notes on the gameplay systems.</p>"),
-          N("code concepts","doc","<p>Ideas not yet built.</p>"),
-          N("code design","doc"),
-          N("code strategy","doc"),
-          N("git notes","doc","<p>Branching + submodule reminders.</p>"),
-          N("file structure","doc"),
-          N("issues and solutions","task","<p>Bugs paired with their fixes.</p>", null, true),
-        ], true),
-        N("setup","folder","<p>Rig, character and controller configuration.</p>",[
-          N("character setup","doc"),
-          N("controller setup","doc"),
-          N("maya setup","doc"),
-          N("rigging","doc"),
-          N("facial shapes","doc"),
-          N("eyes","doc"),
-          N("steam dev setup","doc"),
-        ]),
-        N("meetings","folder","<p>Dated logs, one page per stand-up.</p>",[
-          N("july 13 - chris","note"),
-          N("july 7 - justin","note"),
-          N("june 23 - justin","note"),
-          N("june 22 - chris","note"),
-          N("may 24 - manuel","note"),
-          N("nov 17 - manuel","note"),
-          N("oct 14 - adrian","note"),
-        ]),
-        N("design","folder","",[
-          N("design summary","doc"),
-          N("design thoughts","doc"),
-          N("elevator pitch","doc","<p>One paragraph, said out loud in an elevator.</p>", null, true),
-          N("other VR ideas","doc"),
-          N("tweak problem","task", tweakBody, null, true),
-        ], true),
-        N("production","folder","",[
-          N("do list","task","<p>Active tasks.</p>", null, true),
-          N("pipeline","doc"),
-          N("assets to use","doc"),
-          N("rendering demo","doc"),
-          N("trailer","doc"),
-        ]),
-        N("business","folder","",[
-          N("funding","doc"),
-          N("budget","doc"),
-          N("marketing","doc"),
-          N("website","doc"),
-          N("CDM submission","doc"),
-          N("contacts and people","doc"),
-          N("collaborator emails","doc"),
-        ]),
-        N("steamVR","folder","",[
-          N("steamVR update","doc"),
-          N("HTC base station","doc"),
-          N("tracked controller","doc"),
-        ]),
-      ], true),
+    N("Untitled outline","folder","<p>Empty outline. Add notes from the sidebar.</p>",[], false),
   ]
 };
+doc.tree[0].expanded = true;
 
 /* ============================ state ============================ */
 let selId = null;
@@ -894,6 +827,9 @@ function markDirty(){ if(!dirty){ dirty=true; paintState(); } }
 function paintState(){
   $("#stateDot").classList.toggle("dirty", dirty);
   $("#fileState").textContent = dirty ? "unsaved changes" : "saved";
+  const ss = $("#saveState");
+  ss.classList.toggle("dirty", dirty);
+  ss.querySelector(".slabel").textContent = dirty ? "Unsaved" : "Saved";
 }
 function refreshStatus(){
   let total=0, marked=0;
@@ -1331,7 +1267,6 @@ function endDrag(){
 /* ============================ boot ============================ */
 applyFont(doc.meta.font || "system");
 renderTree();
-select(find2("tweak problem") || doc.tree[0].id);
+select(doc.tree[0].id);
 paintState();
-function find2(title){ let id=null; walk(doc.tree, n=>{ if(n.title===title) id=n.id; }); return id; }
 </script>
