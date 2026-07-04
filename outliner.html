@@ -1,0 +1,1337 @@
+<!--
+  Sift — a single-file tree note outliner (design prototype)
+  ----------------------------------------------------------
+  Self-contained. No external fonts, scripts, or network calls, so it runs
+  offline when opened directly in a browser on Windows.
+
+  File format: .otl  (Outline Note) — one UTF-8 JSON document.
+  Derived from the barBeeQ.mpl schema (Absolute Database / MainTable) but
+  flattened into human-readable nested JSON:
+
+      mpl  Node_AUTOINC  -> id
+           Node_MASTER   \  parent<->child links, collapsed into
+           Node_DETAIL   /  a nested "children" array
+           Node_ITEM     -> title
+           Node_DATA     -> body   (RTF in mpl; HTML subset here)
+           Node_IMAGE    -> icon
+           Node_MARKED   -> marked (flag)
+
+  {
+    "format": "otl-outline",
+    "version": 1,
+    "meta":   { "title": "barBeeQ", "modified": "ISO-8601" },
+    "tree":   [ { id, title, icon, marked, expanded, body, children:[…] } ]
+  }
+-->
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sift — outliner</title>
+<style>
+  :root{
+    /* palette — engineering ledger: cool graphite shell, warm-paper page */
+    --ink:        #1b1e23;
+    --graphite:   #23272e;
+    --graphite-2: #2c313a;
+    --graphite-3: #363d47;
+    --chrome-txt: #c3c9d2;
+    --chrome-dim: #7f8794;
+    --paper:      #fbf9f4;
+    --paper-2:    #f4f1e9;
+    --rule:       #e6e1d5;
+    --rule-2:     #d9d3c4;
+    --signal:     #e2812f;   /* amber — selection / active (not terracotta) */
+    --signal-ink: #b45f16;
+    --mark:       #2f9e8c;   /* teal — the "marked" flag, a different meaning */
+    --danger:     #c8503b;
+
+    --ui: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono: "Cascadia Code", "Cascadia Mono", "SFMono-Regular", Consolas,
+            "Liberation Mono", Menlo, monospace;
+    --serif: "Iowan Old Style", "Palatino Linotype", "Book Antiqua",
+             Palatino, Georgia, serif;
+    --editor-font: var(--serif);   /* swapped by the font selector */
+
+    --row-h: 26px;
+    --side-w: 288px;
+  }
+
+  *{ box-sizing:border-box; }
+  html,body{ height:100%; margin:0; }
+  body{
+    font-family:var(--ui);
+    color:var(--ink);
+    background:var(--graphite);
+    -webkit-font-smoothing:antialiased;
+    overflow:hidden;
+  }
+  button{ font-family:inherit; color:inherit; }
+
+  /* ---------- app frame ---------- */
+  .app{
+    height:100vh;
+    display:grid;
+    grid-template-rows:auto 1fr auto;
+  }
+
+  /* ---------- top toolbar (chrome) ---------- */
+  .toolbar{
+    display:flex; align-items:center; gap:14px;
+    padding:0 12px; height:44px;
+    background:linear-gradient(var(--graphite-2),var(--graphite));
+    border-bottom:1px solid #14171b;
+    color:var(--chrome-txt);
+    user-select:none;
+  }
+  .brand{ display:flex; align-items:baseline; gap:8px; }
+  .brand .glyph{ color:var(--signal); font-size:15px; transform:translateY(1px); }
+  .brand .name{ font-weight:700; letter-spacing:.02em; font-size:15px; }
+  .brand .tag{
+    font-family:var(--mono); font-size:10.5px; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--chrome-dim);
+  }
+  .tbar-group{ display:flex; gap:2px; }
+  .tbtn{
+    background:transparent; border:1px solid transparent; border-radius:6px;
+    color:var(--chrome-txt); height:30px; padding:0 11px; font-size:12.5px;
+    cursor:pointer; display:inline-flex; align-items:center; gap:7px;
+    transition:background .12s, border-color .12s;
+  }
+  .tbtn:hover{ background:var(--graphite-3); }
+  .tbtn:active{ background:#1c2026; }
+  .tbtn svg{ width:14px; height:14px; }
+  .tbtn kbd{
+    font-family:var(--mono); font-size:9.5px; color:var(--chrome-dim);
+    border:1px solid #444b56; border-bottom-width:2px; border-radius:4px;
+    padding:1px 4px; margin-left:2px;
+  }
+  .spacer{ flex:1; }
+  .filechip{
+    font-family:var(--mono); font-size:11.5px; color:var(--chrome-dim);
+    display:flex; align-items:center; gap:8px;
+  }
+  .filechip .fname{ color:var(--chrome-txt); }
+  .dot{ width:7px; height:7px; border-radius:50%; background:var(--mark); }
+  .dot.dirty{ background:var(--signal); box-shadow:0 0 0 3px rgba(226,129,47,.18); }
+
+  /* ---------- main split ---------- */
+  .main{ display:grid; grid-template-columns:var(--side-w) 1fr; min-height:0; }
+
+  /* ---------- outline sidebar ---------- */
+  .side{
+    background:var(--graphite);
+    border-right:1px solid #14171b;
+    display:flex; flex-direction:column; min-height:0;
+    color:var(--chrome-txt);
+  }
+  .side-head{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:11px 12px 8px; user-select:none;
+  }
+  .side-head .lbl{
+    font-family:var(--mono); font-size:10.5px; letter-spacing:.16em;
+    text-transform:uppercase; color:var(--chrome-dim);
+  }
+  .side-actions{ display:flex; gap:2px; }
+  .mini{
+    width:24px; height:24px; border-radius:6px; border:1px solid transparent;
+    background:transparent; color:var(--chrome-dim); cursor:pointer;
+    display:inline-flex; align-items:center; justify-content:center;
+  }
+  .mini:hover{ background:var(--graphite-3); color:var(--chrome-txt); }
+  .mini svg{ width:15px; height:15px; }
+
+  .tree{ flex:1; overflow:auto; padding:2px 6px 14px; min-height:0; }
+  .tree::-webkit-scrollbar{ width:11px; }
+  .tree::-webkit-scrollbar-thumb{ background:#3a414c; border-radius:6px; border:3px solid var(--graphite); }
+  .tree::-webkit-scrollbar-thumb:hover{ background:#48505c; }
+
+  .node-children{
+    margin-left:14px;
+    border-left:1px solid #333a44;      /* the connector spine */
+    padding-left:2px;
+  }
+  .row{
+    display:flex; align-items:center; gap:2px;
+    height:var(--row-h); border-radius:6px; padding-right:6px;
+    position:relative; cursor:default; user-select:none;
+  }
+  .row:hover{ background:var(--graphite-2); }
+  .row.sel{ background:var(--graphite-3); }
+  .row.sel::before{                        /* amber selection bar */
+    content:""; position:absolute; left:-2px; top:4px; bottom:4px;
+    width:3px; border-radius:2px; background:var(--signal);
+  }
+  /* ---- drag & drop ---- */
+  .row[draggable="true"]{ cursor:grab; }
+  .row.dragging{ opacity:.35; }
+  .row.drop-in{                             /* nest inside this node */
+    background:rgba(226,129,47,.15);
+    box-shadow:inset 0 0 0 1.5px var(--signal); border-radius:6px;
+  }
+  .row.drop-before::after, .row.drop-after::after{
+    content:""; position:absolute; left:20px; right:6px; height:2px;
+    background:var(--signal); border-radius:2px;
+    box-shadow:0 0 0 2px rgba(226,129,47,.25);
+  }
+  .row.drop-before::after{ top:-1px; }
+  .row.drop-after::after{ bottom:-1px; }
+  .row.drop-before::before, .row.drop-after::before{
+    content:""; position:absolute; width:6px; height:6px; border-radius:50%;
+    background:var(--signal); left:16px;
+  }
+  .row.drop-before::before{ top:-3px; }
+  .row.drop-after::before{ bottom:-3px; }
+  .twist{
+    width:18px; height:100%; flex:0 0 18px; display:flex; align-items:center;
+    justify-content:center; cursor:pointer; color:var(--chrome-dim);
+  }
+  .twist svg{ width:9px; height:9px; transition:transform .14s ease; }
+  .row.open > .twist svg{ transform:rotate(90deg); }
+  .twist.leaf{ visibility:hidden; }
+
+  .icn{ width:18px; flex:0 0 18px; display:flex; align-items:center; justify-content:center; color:var(--chrome-dim); }
+  .icn svg{ width:14px; height:14px; }
+  .row.sel .icn{ color:var(--signal); }
+
+  .title{
+    flex:1; font-size:13px; white-space:nowrap; overflow:hidden;
+    text-overflow:ellipsis; padding:0 4px; line-height:var(--row-h);
+  }
+  .row.sel .title{ color:#fff; font-weight:600; }
+  .flag{
+    width:16px; flex:0 0 16px; display:flex; align-items:center; justify-content:center;
+    color:transparent; cursor:pointer;
+  }
+  .flag svg{ width:12px; height:12px; }
+  .row:hover .flag{ color:#59616d; }
+  .flag.on{ color:var(--mark) !important; }
+  .title-edit{
+    flex:1; font-family:var(--ui); font-size:13px; margin:0 4px;
+    background:#0f1216; color:#fff; border:1px solid var(--signal);
+    border-radius:4px; padding:1px 5px; outline:none;
+  }
+
+  /* ---------- editor / page ---------- */
+  .page{ background:var(--paper-2); display:flex; flex-direction:column; min-height:0; }
+  .crumbs{
+    display:flex; align-items:center; gap:6px; flex-wrap:wrap;
+    padding:9px 20px; background:var(--paper-2);
+    border-bottom:1px solid var(--rule-2);
+    font-family:var(--mono); font-size:11px; color:#8a8478;
+    position:relative;
+  }
+  .crumbs::before{                          /* selection color flows in from tree */
+    content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--signal);
+  }
+  .crumbs b{ color:var(--ink); font-weight:600; }
+  .crumbs .sep{ opacity:.5; }
+
+  .etoolbar{
+    display:flex; align-items:center; gap:4px;
+    padding:6px 16px; background:var(--paper);
+    border-bottom:1px solid var(--rule);
+  }
+  .ebtn{
+    height:30px; min-width:32px; padding:0 9px; border-radius:6px;
+    border:1px solid transparent; background:transparent; color:#4a4a44;
+    cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:6px;
+    font-size:13px;
+  }
+  .ebtn:hover{ background:var(--paper-2); }
+  .ebtn.active{ background:#f5e7d4; border-color:#eccfa6; color:var(--signal-ink); }
+  .ebtn svg{ width:16px; height:16px; }
+  .edivide{ width:1px; height:20px; background:var(--rule-2); margin:0 6px; }
+  .etoolbar .grow{ flex:1; }
+  .wcount{ font-family:var(--mono); font-size:11px; color:#9a9385; }
+
+  .scroll{ flex:1; overflow:auto; min-height:0; }
+  .scroll::-webkit-scrollbar{ width:12px; }
+  .scroll::-webkit-scrollbar-thumb{ background:#d8d1c1; border-radius:6px; border:3px solid var(--paper-2); }
+  .sheet{
+    max-width:760px; margin:26px auto 120px; background:var(--paper);
+    border:1px solid var(--rule); border-radius:3px;
+    box-shadow:0 1px 0 rgba(0,0,0,.03), 0 18px 40px -30px rgba(0,0,0,.4);
+  }
+  .sheet-title{
+    font-family:var(--editor-font); font-size:24px; font-weight:600; letter-spacing:-.01em;
+    padding:30px 46px 6px; color:var(--ink); outline:none;
+  }
+  .sheet-meta{
+    font-family:var(--mono); font-size:10.5px; letter-spacing:.06em; color:#a49d8d;
+    padding:0 46px 14px; border-bottom:1px solid var(--rule); text-transform:uppercase;
+  }
+  .editor{
+    font-family:var(--editor-font); font-size:15.5px; line-height:1.68; color:#26251f;
+    padding:22px 46px 60px; outline:none; min-height:320px;
+  }
+  .editor:focus{ outline:none; }
+  .editor p{ margin:0 0 .78em; }
+  .editor ul{ margin:.2em 0 .9em; padding-left:1.4em; }
+  .editor li{ margin:.14em 0; }
+  .editor b, .editor strong{ font-weight:700; color:#1a1a15; }
+  .editor code, .editor .mono{ font-family:var(--mono); font-size:.86em; background:var(--paper-2);
+    padding:.05em .35em; border-radius:4px; }
+  .editor .indent{ display:block; padding-left:2.2em; }
+  .editor:empty::before{
+    content:"Empty page. Start typing, or press B for bold, • for a bullet, Tab to indent.";
+    color:#b7b0a1; font-style:italic;
+  }
+
+  /* ---------- status bar ---------- */
+  .status{
+    display:flex; align-items:center; gap:18px;
+    height:26px; padding:0 14px; background:var(--graphite-2);
+    border-top:1px solid #14171b; color:var(--chrome-dim);
+    font-family:var(--mono); font-size:10.5px; letter-spacing:.04em; user-select:none;
+  }
+  .status .s-item{ display:flex; align-items:center; gap:6px; }
+  .status b{ color:var(--chrome-txt); font-weight:600; }
+  .status .right{ margin-left:auto; }
+
+  /* ---------- format sheet (slide-in reference) ---------- */
+  .fmt-toggle{
+    position:fixed; right:0; bottom:34px; z-index:20;
+    background:var(--graphite-3); color:var(--chrome-txt);
+    border:1px solid #14171b; border-right:none;
+    border-radius:8px 0 0 8px; padding:8px 12px; cursor:pointer;
+    font-family:var(--mono); font-size:10.5px; letter-spacing:.1em; text-transform:uppercase;
+    writing-mode:vertical-rl; transform:rotate(180deg);
+  }
+  .fmt-toggle:hover{ background:var(--signal); color:#fff; }
+  .fmt-panel{
+    position:fixed; top:0; right:0; height:100%; width:400px; max-width:88vw; z-index:30;
+    background:#1c2026; color:var(--chrome-txt); border-left:1px solid #000;
+    box-shadow:-30px 0 60px -30px rgba(0,0,0,.6);
+    transform:translateX(100%); transition:transform .24s ease; display:flex; flex-direction:column;
+  }
+  .fmt-panel.open{ transform:none; }
+  .fmt-panel h3{ margin:0; padding:16px 18px; font-size:14px; border-bottom:1px solid #000;
+    display:flex; align-items:center; justify-content:space-between; }
+  .fmt-panel h3 .x{ cursor:pointer; color:var(--chrome-dim); }
+  .fmt-body{ overflow:auto; padding:16px 18px; }
+  .fmt-body p{ font-size:12.5px; line-height:1.6; color:var(--chrome-dim); margin:0 0 12px; }
+  .fmt-body pre{
+    font-family:var(--mono); font-size:11px; line-height:1.55; color:#cdd3db;
+    background:#12151a; border:1px solid #2a2f37; border-radius:8px; padding:12px; overflow:auto;
+    white-space:pre;
+  }
+  .fmt-body .k{ color:var(--signal); }
+  .fmt-body .s{ color:#98c379; }
+  .fmt-body table{ width:100%; border-collapse:collapse; margin:6px 0 14px; }
+  .fmt-body td{ font-size:11.5px; padding:5px 6px; border-bottom:1px solid #2a2f37; vertical-align:top; }
+  .fmt-body td:first-child{ font-family:var(--mono); color:var(--signal); white-space:nowrap; }
+
+  .backdrop{ position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:25; opacity:0; pointer-events:none; transition:opacity .2s; }
+  .backdrop.on{ opacity:1; pointer-events:auto; }
+
+  /* ---------- search ---------- */
+  .search{ padding:0 10px 8px; position:relative; }
+  .search svg{ position:absolute; left:19px; top:50%; transform:translateY(-50%);
+    width:13px; height:13px; color:var(--chrome-dim); pointer-events:none; }
+  .search input{
+    width:100%; height:30px; padding:0 26px 0 30px; font-family:var(--ui); font-size:12.5px;
+    color:var(--chrome-txt); background:#171a1f; border:1px solid #2b313a; border-radius:7px; outline:none;
+  }
+  .search input:focus{ border-color:var(--signal); }
+  .search input::placeholder{ color:#5b626d; }
+  .search .clr{ position:absolute; right:18px; top:50%; transform:translateY(-50%);
+    width:16px; height:16px; border:none; background:transparent; color:var(--chrome-dim);
+    cursor:pointer; display:none; font-size:14px; line-height:1; }
+  .search.has .clr{ display:block; }
+  .search-count{ padding:0 12px 6px; font-family:var(--mono); font-size:10px;
+    letter-spacing:.08em; color:var(--chrome-dim); min-height:14px; }
+  .title mark{ background:rgba(226,129,47,.32); color:inherit; border-radius:2px; padding:0 1px; }
+  .row.nomatch .title{ opacity:.4; }
+
+  /* ---------- font selector ---------- */
+  .fontsel{ position:relative; }
+  .fontsel select{
+    height:30px; border:1px solid var(--rule-2); border-radius:6px; background:var(--paper);
+    color:#4a4a44; font-family:var(--ui); font-size:12px; padding:0 26px 0 10px; cursor:pointer;
+    outline:none; -webkit-appearance:none; appearance:none;
+  }
+  .fontsel::after{ content:"▾"; position:absolute; right:9px; top:50%; transform:translateY(-50%);
+    font-size:10px; color:#9a9385; pointer-events:none; }
+  .fontsel select:hover{ background:var(--paper-2); }
+  .fontsel select:focus{ border-color:var(--signal); }
+
+  /* ---------- toast ---------- */
+  .toast{
+    position:fixed; left:50%; bottom:44px; transform:translate(-50%, 20px); z-index:40;
+    max-width:520px; background:#1c2026; color:var(--chrome-txt); border:1px solid #000;
+    border-left:3px solid var(--signal); border-radius:10px; padding:14px 16px;
+    box-shadow:0 24px 60px -24px rgba(0,0,0,.7); opacity:0; pointer-events:none;
+    transition:opacity .2s, transform .2s; font-size:12.5px; line-height:1.5;
+  }
+  .toast.on{ opacity:1; transform:translate(-50%,0); pointer-events:auto; }
+  .toast b{ color:#fff; }
+  .toast .tclose{ float:right; margin-left:14px; color:var(--chrome-dim); cursor:pointer; }
+  .toast .mono{ font-family:var(--mono); color:var(--signal); }
+
+  @media (prefers-reduced-motion: reduce){
+    *{ transition:none !important; }
+  }
+  @media (max-width: 720px){
+    :root{ --side-w: 210px; }
+    .brand .tag, .tbtn kbd{ display:none; }
+  }
+  :focus-visible{ outline:2px solid var(--signal); outline-offset:1px; }
+</style>
+
+<div class="app">
+  <!-- top toolbar -->
+  <div class="toolbar">
+    <div class="brand">
+      <span class="glyph">◆</span>
+      <span class="name">Sift</span>
+      <span class="tag">outliner</span>
+    </div>
+    <div class="tbar-group">
+      <button class="tbtn" id="btnNew" title="Start an empty outline">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></svg>New
+      </button>
+      <button class="tbtn" id="btnOpen" title="Open an .otl file">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7h6l2 2h10v10H3z"/></svg>Open
+      </button>
+      <button class="tbtn" id="btnImport" title="Import an OPML / XML outline (full text) or an .mpl file (titles only)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12m0 0l-4-4m4 4l4-4"/><path d="M4 17v3h16v-3"/></svg>Import
+      </button>
+      <button class="tbtn" id="btnSave" title="Save — overwrite the opened file in its folder">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 3h11l3 3v15H5z"/><path d="M8 3v6h7V3"/><path d="M8 14h8"/></svg>Save<kbd>Ctrl S</kbd>
+      </button>
+      <button class="tbtn" id="btnSaveAs" title="Save As — choose a new file / location">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 3h11l3 3v15H5z"/><path d="M8 3v6h7V3"/><path d="M15 13l3 3-3 3"/></svg>Save As
+      </button>
+    </div>
+    <div class="spacer"></div>
+    <div class="filechip">
+      <span class="dot" id="stateDot"></span>
+      <span class="fname" id="fileName">barBeeQ.otl</span>
+      <span id="fileState">saved</span>
+    </div>
+  </div>
+
+  <!-- main split -->
+  <div class="main">
+    <!-- sidebar outline -->
+    <aside class="side">
+      <div class="side-head">
+        <span class="lbl">Outline</span>
+        <div class="side-actions">
+          <button class="mini" id="btnAdd" title="New note below selection">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+          <button class="mini" id="btnChild" title="New note inside selection">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M5 5v8a3 3 0 0 0 3 3h6"/><path d="M11 13l3 3-3 3"/></svg>
+          </button>
+          <button class="mini" id="btnDel" title="Delete selection">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="search" id="searchWrap">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+        <input id="searchInput" type="text" placeholder="Search notes…" spellcheck="false" />
+        <button class="clr" id="searchClear" title="Clear (Esc)">✕</button>
+      </div>
+      <div class="search-count" id="searchCount"></div>
+      <div class="tree" id="tree"></div>
+    </aside>
+
+    <!-- editor page -->
+    <section class="page">
+      <div class="crumbs" id="crumbs"></div>
+      <div class="etoolbar">
+        <button class="ebtn" id="fBold" title="Bold (Ctrl+B)"><b style="font-family:var(--serif)">B</b></button>
+        <button class="ebtn" id="fBullet" title="Bullet list">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="5" cy="7" r="1.4" fill="currentColor"/><circle cx="5" cy="12" r="1.4" fill="currentColor"/><circle cx="5" cy="17" r="1.4" fill="currentColor"/><path d="M10 7h10M10 12h10M10 17h10"/></svg>
+        </button>
+        <div class="edivide"></div>
+        <button class="ebtn" id="fOutdent" title="Outdent (Shift+Tab)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M20 6H10M20 12H13M20 18H10M7 9l-3 3 3 3"/></svg>
+        </button>
+        <button class="ebtn" id="fIndent" title="Indent (Tab)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 6h10M4 12h7M4 18h10M17 9l3 3-3 3"/></svg>
+        </button>
+        <div class="grow"></div>
+        <div class="fontsel">
+          <select id="fontSelect" title="Page font (Google Fonts)"></select>
+        </div>
+        <div class="edivide"></div>
+        <span class="wcount" id="wcount">0 words</span>
+      </div>
+      <div class="scroll">
+        <div class="sheet">
+          <div class="sheet-title" id="pageTitle" contenteditable="true" spellcheck="false"></div>
+          <div class="sheet-meta" id="pageMeta"></div>
+          <div class="editor" id="editor" contenteditable="true" spellcheck="false"></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- status bar -->
+  <div class="status">
+    <span class="s-item"><b id="stNotes">0</b> notes</span>
+    <span class="s-item"><b id="stMarked">0</b> marked</span>
+    <span class="s-item right">otl format · v1 · single file</span>
+  </div>
+</div>
+
+<!-- format reference -->
+<button class="fmt-toggle" id="fmtToggle">File format ↔</button>
+<div class="backdrop" id="backdrop"></div>
+<aside class="fmt-panel" id="fmtPanel">
+  <h3>The .otl file <span class="x" id="fmtClose">✕</span></h3>
+  <div class="fmt-body">
+    <p>Everything — the whole tree and every page — lives in one UTF-8 JSON file. New / Open / Save move that single file, exactly like the source .mpl kept its whole database in one blob, just human-readable now.</p>
+    <p>Fields, mapped from the original <span style="color:var(--chrome-txt)">MainTable</span>:</p>
+    <table>
+      <tr><td>id</td><td>Node_AUTOINC — stable node key</td></tr>
+      <tr><td>title</td><td>Node_ITEM — the outline label</td></tr>
+      <tr><td>children</td><td>Node_MASTER + Node_DETAIL, folded into nesting</td></tr>
+      <tr><td>body</td><td>Node_DATA — page text (RTF → HTML subset)</td></tr>
+      <tr><td>icon</td><td>Node_IMAGE — note · folder · doc · task</td></tr>
+      <tr><td>marked</td><td>Node_MARKED — the teal flag</td></tr>
+      <tr><td>expanded</td><td>UI state, saved with the tree</td></tr>
+    </table>
+    <pre><span class="k">{</span>
+  <span class="s">"format"</span>: <span class="s">"otl-outline"</span>,
+  <span class="s">"version"</span>: 1,
+  <span class="s">"meta"</span>: <span class="k">{</span> <span class="s">"title"</span>: <span class="s">"barBeeQ"</span> <span class="k">}</span>,
+  <span class="s">"tree"</span>: <span class="k">[</span>
+    <span class="k">{</span>
+      <span class="s">"id"</span>: <span class="s">"n_code"</span>,
+      <span class="s">"title"</span>: <span class="s">"code notes"</span>,
+      <span class="s">"icon"</span>: <span class="s">"folder"</span>,
+      <span class="s">"marked"</span>: false,
+      <span class="s">"expanded"</span>: true,
+      <span class="s">"body"</span>: <span class="s">"&lt;p&gt;…&lt;/p&gt;"</span>,
+      <span class="s">"children"</span>: <span class="k">[ … ]</span>
+    <span class="k">}</span>
+  <span class="k">]</span>
+<span class="k">}</span></pre>
+    <p>Dropped from the binary original: the Absolute Database container, the separate Version / Header / Icons tables, and the relational master–detail join. The tree carries its own shape.</p>
+  </div>
+</aside>
+
+<input type="file" id="fileInput" accept=".otl,.json,application/json" style="display:none" />
+<input type="file" id="mplInput" accept=".opml,.xml,.mpl" style="display:none" />
+
+<div class="toast" id="toast"><span class="tclose" id="toastClose">✕</span><span id="toastBody"></span></div>
+
+<script>
+/* ============================ seed document ============================ */
+/* Titles are the real barBeeQ project notes pulled from the .mpl file.    */
+let uid = 0;
+const nid = () => "n" + (++uid);
+
+function N(title, icon, body, children, marked){
+  return { id:nid(), title, icon:icon||"note", marked:!!marked,
+           expanded:false, body:body||"", children:children||[] };
+}
+
+const tweakBody =
+  '<p><b>math problem</b></p>' +
+  '<ul><li>remap 0–2 to another range of values</li>' +
+  '<li><span class="mono">newComplexity = origComplexity * tweakValue * multiplier</span></li></ul>' +
+  '<p><b>Objective</b></p>' +
+  '<p>I want the <b>influence</b> value to be the amount of influence that the ' +
+  '<span class="mono">tweakValue</span> has on the final result.</p>' +
+  '<ul>' +
+  '<li><span class="mono">origComplexity</span> = set in the spreadsheet (e.g. 3.5)</li>' +
+  '<li><span class="mono">tweakValue</span> = a number from the tweak slider, 0–1 or 0–2, can be zero</li>' +
+  '<li><span class="mono">influence</span> = how much the tweak affects the result. ' +
+  '0 = no influence, 1 = 100%, 2 = 200%</li>' +
+  '<li><span class="mono">newComplexity</span> = origComplexity shaped by influence — <b>never</b> zero</li>' +
+  '</ul>' +
+  '<p><b>Worked cases</b> &nbsp;(origComplexity = 3.5)</p>' +
+  '<p><span class="indent">tweak 2, influence 1 → newComplexity 7</span>' +
+  '<span class="indent">tweak 2, influence 0 → newComplexity 3.5</span>' +
+  '<span class="indent">tweak 2, influence 2 → newComplexity 7</span>' +
+  '<span class="indent">tweak 1, influence 0 → newComplexity 3.5</span></p>' +
+  '<p><span class="mono">origComplexity * tweakValue * influence</span> doesn\'t work.</p>';
+
+const doc = {
+  format:"otl-outline", version:1,
+  meta:{ title:"barBeeQ" },
+  tree:[
+    N("barBeeQ","folder",
+      '<p>VR project journal. Master tree — every meeting, code note and setup guide hangs off this root.</p>',
+      [
+        N("code","folder","<p>Programming notes and strategy.</p>",[
+          N("code notes","doc","<p>Running notes on the gameplay systems.</p>"),
+          N("code concepts","doc","<p>Ideas not yet built.</p>"),
+          N("code design","doc"),
+          N("code strategy","doc"),
+          N("git notes","doc","<p>Branching + submodule reminders.</p>"),
+          N("file structure","doc"),
+          N("issues and solutions","task","<p>Bugs paired with their fixes.</p>", null, true),
+        ], true),
+        N("setup","folder","<p>Rig, character and controller configuration.</p>",[
+          N("character setup","doc"),
+          N("controller setup","doc"),
+          N("maya setup","doc"),
+          N("rigging","doc"),
+          N("facial shapes","doc"),
+          N("eyes","doc"),
+          N("steam dev setup","doc"),
+        ]),
+        N("meetings","folder","<p>Dated logs, one page per stand-up.</p>",[
+          N("july 13 - chris","note"),
+          N("july 7 - justin","note"),
+          N("june 23 - justin","note"),
+          N("june 22 - chris","note"),
+          N("may 24 - manuel","note"),
+          N("nov 17 - manuel","note"),
+          N("oct 14 - adrian","note"),
+        ]),
+        N("design","folder","",[
+          N("design summary","doc"),
+          N("design thoughts","doc"),
+          N("elevator pitch","doc","<p>One paragraph, said out loud in an elevator.</p>", null, true),
+          N("other VR ideas","doc"),
+          N("tweak problem","task", tweakBody, null, true),
+        ], true),
+        N("production","folder","",[
+          N("do list","task","<p>Active tasks.</p>", null, true),
+          N("pipeline","doc"),
+          N("assets to use","doc"),
+          N("rendering demo","doc"),
+          N("trailer","doc"),
+        ]),
+        N("business","folder","",[
+          N("funding","doc"),
+          N("budget","doc"),
+          N("marketing","doc"),
+          N("website","doc"),
+          N("CDM submission","doc"),
+          N("contacts and people","doc"),
+          N("collaborator emails","doc"),
+        ]),
+        N("steamVR","folder","",[
+          N("steamVR update","doc"),
+          N("HTC base station","doc"),
+          N("tracked controller","doc"),
+        ]),
+      ], true),
+  ]
+};
+
+/* ============================ state ============================ */
+let selId = null;
+let dirty = false;
+
+const $ = s => document.querySelector(s);
+const tree = $("#tree");
+const editor = $("#editor");
+const pageTitle = $("#pageTitle");
+
+/* walk helpers */
+function walk(nodes, fn, parent){
+  for(const n of nodes){ fn(n, parent, nodes); walk(n.children, fn, n); }
+}
+function find(id){ let hit=null; walk(doc.tree, n=>{ if(n.id===id) hit=n; }); return hit; }
+function pathTo(id){
+  const path=[]; let found=false;
+  (function rec(nodes, trail){
+    for(const n of nodes){
+      const t=[...trail,n];
+      if(n.id===id){ path.push(...t); found=true; return; }
+      rec(n.children, t); if(found) return;
+    }
+  })(doc.tree, []);
+  return path;
+}
+function parentArr(id){
+  let arr=null;
+  (function rec(nodes){ for(const n of nodes){ if(n.id===id){ arr=nodes; return; } rec(n.children); } })(doc.tree);
+  return arr;
+}
+function isSelfOrDescendant(node, id){
+  if(node.id===id) return true;
+  return node.children.some(c => isSelfOrDescendant(c, id));
+}
+/* move dragId relative to targetId. pos = "before" | "after" | "inside" */
+function moveNode(dragId, targetId, pos){
+  if(dragId===targetId) return false;
+  const dragNode = find(dragId), targetNode = find(targetId);
+  if(!dragNode || !targetNode) return false;
+  if(isSelfOrDescendant(dragNode, targetId)) return false;   // can't drop into own subtree
+  // detach from current parent
+  const srcArr = parentArr(dragId);
+  srcArr.splice(srcArr.indexOf(dragNode), 1);
+  // re-attach
+  if(pos==="inside"){
+    targetNode.children.push(dragNode);
+    targetNode.expanded = true;
+    if(targetNode.icon==="note") targetNode.icon = "folder";
+  } else {
+    const destArr = parentArr(targetId);           // recompute after detach
+    let idx = destArr.indexOf(targetNode);
+    if(pos==="after") idx += 1;
+    destArr.splice(idx, 0, dragNode);
+  }
+  markDirty();
+  return true;
+}
+
+/* ============================ icons ============================ */
+const ICON = {
+  folder:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 6h6l2 2h10v11H3z"/></svg>',
+  doc:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 12h6M9 16h6"/></svg>',
+  note:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M5 4h14v13l-4 4H5z"/><path d="M19 17h-4v4"/></svg>',
+  task:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 12l3 3 5-6"/></svg>',
+};
+const TWIST = '<svg viewBox="0 0 10 10" fill="currentColor"><path d="M3 1l5 4-5 4z"/></svg>';
+const FLAG  = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 3v18M5 4h11l-2 3 2 3H5"/></svg>';
+
+/* ============================ search ============================ */
+let query = "";
+let matchSet = new Set();   // nodes that match
+let keepSet = new Set();    // matches + their ancestors (what stays visible)
+
+function bodyText(html){
+  const d = document.createElement("div"); d.innerHTML = html || "";
+  return (d.textContent || "").toLowerCase();
+}
+function computeSearch(){
+  matchSet = new Set(); keepSet = new Set();
+  if(!query){ return; }
+  const q = query.toLowerCase();
+  (function rec(nodes, trail){
+    for(const n of nodes){
+      const t = [...trail, n];
+      const hit = n.title.toLowerCase().includes(q) || bodyText(n.body).includes(q);
+      if(hit){ matchSet.add(n.id); t.forEach(a => keepSet.add(a.id)); }
+      rec(n.children, t);
+    }
+  })(doc.tree, []);
+}
+function hiTitle(el, title){
+  el.textContent = title;
+  if(!query) return;
+  const q = query.toLowerCase(), lc = title.toLowerCase();
+  let i = lc.indexOf(q); if(i < 0) return;
+  el.textContent = "";
+  el.appendChild(document.createTextNode(title.slice(0, i)));
+  const m = document.createElement("mark"); m.textContent = title.slice(i, i+q.length);
+  el.appendChild(m);
+  el.appendChild(document.createTextNode(title.slice(i+q.length)));
+}
+
+/* ============================ render tree ============================ */
+function renderTree(){
+  computeSearch();
+  tree.innerHTML = "";
+  tree.appendChild(buildLevel(doc.tree));
+  refreshStatus();
+  updateSearchCount();
+}
+function buildLevel(nodes){
+  const frag = document.createDocumentFragment();
+  for(const n of nodes){
+    if(query && !keepSet.has(n.id)) continue;         // filtered out
+    const hasKids = n.children.length>0;
+    // during search, force-open ancestors so matches are reachable
+    const open = query ? keepSet.has(n.id) : n.expanded;
+    const row = document.createElement("div");
+    row.className = "row" + (n.id===selId?" sel":"") + (open?" open":"")
+      + (query && !matchSet.has(n.id) ? " nomatch" : "");
+    row.dataset.id = n.id;
+    row.draggable = !query;                 // drag to rearrange (off while searching)
+
+    const tw = document.createElement("div");
+    tw.className = "twist" + (hasKids?"":" leaf");
+    tw.innerHTML = TWIST;
+    tw.onclick = e => { e.stopPropagation(); n.expanded=!n.expanded; renderTree(); };
+    row.appendChild(tw);
+
+    const ic = document.createElement("div");
+    ic.className = "icn"; ic.innerHTML = ICON[n.icon]||ICON.note;
+    row.appendChild(ic);
+
+    const ti = document.createElement("div");
+    ti.className = "title"; hiTitle(ti, n.title);
+    row.appendChild(ti);
+
+    const fl = document.createElement("div");
+    fl.className = "flag" + (n.marked?" on":"");
+    fl.innerHTML = FLAG; fl.title = "Mark this note";
+    fl.onclick = e => { e.stopPropagation(); n.marked=!n.marked; markDirty(); renderTree(); };
+    row.appendChild(fl);
+
+    row.onclick = () => select(n.id);
+    row.ondblclick = e => { if(e.target!==fl) beginRename(row, n); };
+
+    frag.appendChild(row);
+
+    if(hasKids && open){
+      const kids = document.createElement("div");
+      kids.className = "node-children";
+      kids.appendChild(buildLevel(n.children));
+      frag.appendChild(kids);
+    }
+  }
+  return frag;
+}
+function updateSearchCount(){
+  const el = $("#searchCount");
+  if(!query){ el.textContent = ""; return; }
+  const n = matchSet.size;
+  el.textContent = n ? (n + (n===1?" match":" matches")) : "no matches";
+}
+
+function beginRename(row, n){
+  row.draggable = false;                    // let text selection work in the input
+  const ti = row.querySelector(".title");
+  const inp = document.createElement("input");
+  inp.className = "title-edit"; inp.value = n.title;
+  row.replaceChild(inp, ti); inp.focus(); inp.select();
+  const commit = () => { const v=inp.value.trim(); if(v){ n.title=v; markDirty(); } renderTree();
+    if(n.id===selId) renderCrumbs(); };
+  inp.onblur = commit;
+  inp.onkeydown = e => { if(e.key==="Enter"){ e.preventDefault(); inp.blur(); }
+    if(e.key==="Escape"){ inp.value=n.title; inp.blur(); } };
+}
+
+/* ============================ selection / editor ============================ */
+function select(id){
+  if(selId){ flushEditor(); }
+  selId = id;
+  const n = find(id);
+  // expand ancestors so the row is visible
+  pathTo(id).forEach(p => { if(p.children.length) p.expanded=true; });
+  renderTree();
+  pageTitle.textContent = n.title;
+  editor.innerHTML = n.body || "";
+  renderCrumbs();
+  updateWords();
+  syncToolbar();
+}
+function renderCrumbs(){
+  const c = $("#crumbs");
+  const p = pathTo(selId);
+  c.innerHTML = "";
+  p.forEach((n,i) => {
+    const s = document.createElement("span");
+    if(i===p.length-1){ s.innerHTML = "<b>"+esc(n.title)+"</b>"; }
+    else s.textContent = n.title;
+    c.appendChild(s);
+    if(i<p.length-1){ const sep=document.createElement("span"); sep.className="sep"; sep.textContent="›"; c.appendChild(sep); }
+  });
+  $("#pageMeta").textContent = (find(selId)?.icon||"note") + " · " + p.length + " levels deep"
+     + (find(selId)?.marked ? " · marked" : "");
+}
+function flushEditor(){
+  const n = find(selId); if(!n) return;
+  const t = pageTitle.textContent.trim();
+  if(t && t!==n.title){ n.title=t; }
+  n.body = editor.innerHTML;
+}
+function esc(s){ return s.replace(/[&<>]/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[m])); }
+
+/* ============================ formatting ============================ */
+editor.addEventListener("input", () => { markDirty(); updateWords(); });
+pageTitle.addEventListener("input", () => { markDirty();
+  const n=find(selId); if(n){ n.title=pageTitle.textContent.trim()||"Untitled"; }
+  renderTree(); renderCrumbs(); });
+
+function cmd(name, val){ editor.focus(); document.execCommand(name, false, val||null); markDirty(); syncToolbar(); updateWords(); }
+$("#fBold").onclick   = () => cmd("bold");
+$("#fBullet").onclick = () => cmd("insertUnorderedList");
+$("#fIndent").onclick = () => cmd("indent");
+$("#fOutdent").onclick= () => cmd("outdent");
+
+editor.addEventListener("keydown", e => {
+  if(e.key==="Tab"){ e.preventDefault(); cmd(e.shiftKey?"outdent":"indent"); }
+  if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==="b"){ e.preventDefault(); cmd("bold"); }
+});
+editor.addEventListener("keyup", syncToolbar);
+editor.addEventListener("mouseup", syncToolbar);
+function syncToolbar(){
+  try{
+    $("#fBold").classList.toggle("active", document.queryCommandState("bold"));
+    $("#fBullet").classList.toggle("active", document.queryCommandState("insertUnorderedList"));
+  }catch(e){}
+}
+function updateWords(){
+  const t = editor.innerText.trim();
+  const w = t ? t.split(/\s+/).length : 0;
+  $("#wcount").textContent = w + (w===1?" word":" words");
+}
+
+/* ============================ node ops ============================ */
+$("#btnAdd").onclick = () => {
+  const arr = parentArr(selId)||doc.tree;
+  const i = arr.findIndex(x=>x.id===selId);
+  const node = N("New note","note","");
+  arr.splice(i<0?arr.length:i+1, 0, node);
+  markDirty(); select(node.id);
+};
+$("#btnChild").onclick = () => {
+  const n = find(selId); if(!n) return;
+  const node = N("New note","note","");
+  n.children.push(node); n.expanded=true; if(n.icon==="note") n.icon="folder";
+  markDirty(); select(node.id);
+};
+$("#btnDel").onclick = () => {
+  if(!selId) return;
+  const n = find(selId);
+  const count = 1 + descendants(n);
+  if(count>1 && !confirm('Delete "'+n.title+'" and its '+(count-1)+' sub-notes?')) return;
+  const arr = parentArr(selId); if(!arr) return;      // never delete the root
+  const i = arr.findIndex(x=>x.id===selId);
+  arr.splice(i,1);
+  markDirty();
+  const next = arr[i] || arr[i-1] || doc.tree[0];
+  select(next.id);
+};
+function descendants(n){ let c=0; walk(n.children, ()=>c++); return c; }
+
+/* ============================ dirty / status ============================ */
+function markDirty(){ if(!dirty){ dirty=true; paintState(); } }
+function paintState(){
+  $("#stateDot").classList.toggle("dirty", dirty);
+  $("#fileState").textContent = dirty ? "unsaved changes" : "saved";
+}
+function refreshStatus(){
+  let total=0, marked=0;
+  walk(doc.tree, n=>{ total++; if(n.marked) marked++; });
+  $("#stNotes").textContent = total;
+  $("#stMarked").textContent = marked;
+}
+
+/* ============================ file: new / open / save / save-as ============================ */
+let fileHandle = null;                        // File System Access handle to the current .otl
+const supportsFSA = typeof window.showSaveFilePicker === "function";
+const OTL_TYPES = [{ description:"Sift outline", accept:{ "application/json":[".otl",".json"] } }];
+function setFileName(name){ $("#fileName").textContent = name; }
+
+$("#btnNew").onclick = () => {
+  if(dirty && !confirm("Discard unsaved changes and start a new outline?")) return;
+  uid = 0;
+  doc.tree = [ N("Untitled outline","folder","<p>Empty outline. Add notes from the sidebar.</p>",[], false) ];
+  doc.tree[0].expanded = true;
+  doc.meta = { title:"untitled", font: doc.meta.font || "system" };
+  fileHandle = null;
+  setFileName("untitled.otl");
+  clearSearch();
+  dirty=false; paintState();
+  select(doc.tree[0].id);
+};
+
+/* shared loader for opened .otl text (keeps the write-back handle when we have one) */
+function loadOtlText(text, name, handle){
+  const parsed = JSON.parse(text);
+  if(!parsed.tree) throw new Error("no tree");
+  uid = 0;
+  (function rec(nodes){ for(const n of nodes){ n.id=nid(); if(!n.icon)n.icon="note";
+    if(typeof n.expanded!=="boolean")n.expanded=false; if(!Array.isArray(n.children))n.children=[];
+    rec(n.children); } })(parsed.tree);
+  doc.tree = parsed.tree;
+  doc.meta = parsed.meta || { title: name.replace(/\.otl$|\.json$/i,"") };
+  fileHandle = handle || null;
+  setFileName(name);
+  clearSearch();
+  applyFont(doc.meta.font || "system");
+  dirty=false; paintState();
+  select(doc.tree[0].id);
+}
+
+$("#btnOpen").onclick = async () => {
+  if(dirty && !confirm("Discard unsaved changes and open another file?")) return;
+  if(supportsFSA){
+    try{
+      const [handle] = await window.showOpenFilePicker({ types: OTL_TYPES, multiple:false });
+      const file = await handle.getFile();
+      loadOtlText(await file.text(), file.name, handle);
+    }catch(err){
+      if(err && err.name==="AbortError") return;         // user cancelled
+      $("#fileInput").click();                            // policy-blocked -> fallback picker
+    }
+  } else $("#fileInput").click();
+};
+$("#fileInput").onchange = e => {
+  const f = e.target.files[0]; if(!f) return;
+  const r = new FileReader();
+  r.onload = () => { try{ loadOtlText(r.result, f.name, null); }   // no handle -> Save prompts
+    catch(err){ alert("That file isn't a readable .otl outline.\n\n"+err.message); } };
+  r.readAsText(f);
+  e.target.value = "";
+};
+
+/* serialize the document */
+function otlText(){
+  flushEditor();
+  doc.meta.modified = new Date().toISOString();
+  return JSON.stringify(doc, replacer, 2);
+}
+function replacer(k,v){ return v; }           // reserved for pruning transient fields
+async function writeToHandle(handle, text){
+  const w = await handle.createWritable();
+  await w.write(text);
+  await w.close();
+}
+function downloadText(text, name){
+  const blob = new Blob([text], {type:"application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/* Save: overwrite the opened file, in its own folder */
+$("#btnSave").onclick = doSave;
+async function doSave(){
+  const text = otlText();
+  if(fileHandle){
+    try{
+      await writeToHandle(fileHandle, text);
+      dirty=false; paintState();
+      showToast("Saved to <span class='mono'>"+esc(fileHandle.name)+"</span>.");
+    }catch(err){
+      if(err && err.name!=="AbortError") alert("Couldn\u2019t write the file.\n\n"+err.message);
+    }
+    return;
+  }
+  return doSaveAs();                          // nothing opened yet -> ask where
+}
+
+/* Save As: choose a new file / location, then write there */
+$("#btnSaveAs").onclick = doSaveAs;
+async function doSaveAs(){
+  const text = otlText();
+  const suggested = (doc.meta.title || "outline") + ".otl";
+  if(supportsFSA){
+    try{
+      const handle = await window.showSaveFilePicker({ suggestedName: suggested, types: OTL_TYPES });
+      await writeToHandle(handle, text);
+      fileHandle = handle;
+      doc.meta.title = handle.name.replace(/\.otl$|\.json$/i,"");
+      setFileName(handle.name);
+      dirty=false; paintState();
+      showToast("Saved to <span class='mono'>"+esc(handle.name)+"</span>.");
+      return;
+    }catch(err){
+      if(err && err.name==="AbortError") return;          // user cancelled
+      /* fall through to download on policy errors */
+    }
+  }
+  downloadText(text, suggested);
+  dirty=false; paintState();
+  showToast("Downloaded <span class='mono'>"+esc(suggested)+"</span> \u2014 this browser can\u2019t overwrite files in place, so it went to your Downloads folder.");
+}
+
+document.addEventListener("keydown", e => {
+  if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==="s"){
+    e.preventDefault();
+    if(e.shiftKey) doSaveAs(); else doSave();
+  }
+});
+
+/* ============================ search wiring ============================ */
+const searchInput = $("#searchInput");
+searchInput.addEventListener("input", () => {
+  query = searchInput.value.trim();
+  $("#searchWrap").classList.toggle("has", query.length>0);
+  renderTree();
+});
+searchInput.addEventListener("keydown", e => { if(e.key==="Escape") clearSearch(); });
+$("#searchClear").onclick = clearSearch;
+function clearSearch(){
+  query = ""; searchInput.value = "";
+  $("#searchWrap").classList.remove("has");
+  renderTree();
+}
+
+/* ============================ font selector (Google Fonts) ============================ */
+/* family -> {label, css fallback, google name or null for system} */
+const FONTS = [
+  { id:"system",       label:"System serif",     css:"var(--serif)",                        g:null },
+  { id:"Newsreader",   label:"Newsreader",        css:"'Newsreader', Georgia, serif",         g:"Newsreader" },
+  { id:"Lora",         label:"Lora",              css:"'Lora', Georgia, serif",               g:"Lora" },
+  { id:"Source Serif 4",label:"Source Serif 4",   css:"'Source Serif 4', Georgia, serif",     g:"Source Serif 4" },
+  { id:"EB Garamond",  label:"EB Garamond",       css:"'EB Garamond', Garamond, serif",       g:"EB Garamond" },
+  { id:"Spectral",     label:"Spectral",          css:"'Spectral', Georgia, serif",           g:"Spectral" },
+  { id:"Merriweather", label:"Merriweather",      css:"'Merriweather', Georgia, serif",       g:"Merriweather" },
+  { id:"Inter",        label:"Inter (sans)",      css:"'Inter', system-ui, sans-serif",       g:"Inter" },
+  { id:"IBM Plex Sans",label:"IBM Plex Sans",     css:"'IBM Plex Sans', system-ui, sans-serif",g:"IBM Plex Sans" },
+  { id:"Work Sans",    label:"Work Sans (sans)",  css:"'Work Sans', system-ui, sans-serif",   g:"Work Sans" },
+  { id:"JetBrains Mono",label:"JetBrains Mono",   css:"'JetBrains Mono', monospace",          g:"JetBrains Mono" },
+  { id:"IBM Plex Mono",label:"IBM Plex Mono",     css:"'IBM Plex Mono', monospace",           g:"IBM Plex Mono" },
+];
+const fontSelect = $("#fontSelect");
+FONTS.forEach(f => { const o=document.createElement("option"); o.value=f.id; o.textContent=f.label; fontSelect.appendChild(o); });
+const loadedFonts = new Set();
+function loadGoogleFont(name){
+  if(loadedFonts.has(name)) return;
+  loadedFonts.add(name);
+  const link = document.createElement("link");
+  link.rel = "stylesheet";
+  link.href = "https://fonts.googleapis.com/css2?family=" +
+    encodeURIComponent(name).replace(/%20/g,"+") + ":ital,wght@0,400;0,700;1,400&display=swap";
+  document.head.appendChild(link);
+}
+function applyFont(id){
+  const f = FONTS.find(x => x.id===id) || FONTS[0];
+  if(f.g) loadGoogleFont(f.g);
+  document.documentElement.style.setProperty("--editor-font", f.css);
+  fontSelect.value = f.id;
+  doc.meta.font = f.id;
+}
+fontSelect.onchange = () => { applyFont(fontSelect.value); markDirty(); };
+
+/* ============================ import: OPML / XML (full) or .mpl (titles) ============================ */
+$("#btnImport").onclick = () => {
+  if(dirty && !confirm("Importing replaces the current outline. Discard unsaved changes?")) return;
+  $("#mplInput").click();
+};
+$("#mplInput").onchange = e => {
+  const f = e.target.files[0]; if(!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    try{
+      const bytes = new Uint8Array(r.result);
+      let sig = ""; for(let i=0;i<16 && i<bytes.length;i++) sig += String.fromCharCode(bytes[i]);
+      if(sig === "ABS0LUTEDATABASE") importMpl(bytes, f.name);
+      else importOpml(bytes, f.name);
+    }catch(err){
+      alert("Couldn\u2019t import that file.\n\n" + err.message);
+    }
+  };
+  r.readAsArrayBuffer(f);
+  e.target.value = "";
+};
+
+/* ---- OPML / XML: full titles + bodies + hierarchy ---- */
+function importOpml(bytes, fname){
+  // sniff declared encoding, then decode with the right label
+  const head = new TextDecoder("ascii").decode(bytes.slice(0, 300));
+  let label = (head.match(/encoding=["']([^"']+)["']/i) || [])[1];
+  label = label ? label.toLowerCase() : "utf-8";
+  if(/1252|ansi|latin1|iso-8859-1/.test(label)) label = "windows-1252";
+  let text;
+  try{ text = new TextDecoder(label).decode(bytes); }
+  catch(_){ text = new TextDecoder("windows-1252").decode(bytes); }
+
+  // this exporter writes raw CR/LF inside attribute values; XML would collapse
+  // them to spaces, so re-encode newlines that sit inside quoted attributes first
+  text = preserveAttrNewlines(text);
+
+  const dom = new DOMParser().parseFromString(text, "application/xml");
+  const perr = dom.querySelector("parsererror");
+  if(perr) throw new Error("The XML couldn\u2019t be parsed. " + (perr.textContent||"").slice(0,140));
+
+  const bodyEl = dom.querySelector("opml > body") || dom.querySelector("body") || dom.documentElement;
+  const tops = [...bodyEl.children].filter(c => c.tagName.toLowerCase()==="outline");
+  if(!tops.length) throw new Error("No <outline> elements were found \u2014 is this an OPML outline?");
+
+  uid = 0;
+  let count = 0;
+  const build = el => {
+    count++;
+    const title = decodeEntities(el.getAttribute("text") || "Untitled").trim() || "Untitled";
+    const body  = descToHtml(el.getAttribute("description") || "");
+    const kids  = [...el.children].filter(c => c.tagName.toLowerCase()==="outline").map(build);
+    const node = N(title, kids.length ? "folder" : (body ? "doc" : "note"), body, kids, false);
+    return node;
+  };
+  const roots = tops.map(build);
+  roots.forEach(r => r.expanded = true);
+  if(roots[0]) roots[0].children.forEach(c => { if(c.children.length) c.expanded = false; });
+
+  const titleMeta = decodeEntities(
+    (dom.querySelector("opml > head > title")||{}).textContent || fname.replace(/\.(opml|xml)$/i,""));
+  doc.tree = roots;
+  doc.meta = { title: titleMeta.trim() || "imported", font: doc.meta.font || "system" };
+  fileHandle = null;                          // imported -> not yet backed by an .otl file
+  $("#fileName").textContent = doc.meta.title + ".otl";
+  clearSearch();
+  dirty = true; paintState();
+  select(roots[0].id);
+  showToast("Imported <b>" + count + "</b> notes with full text and structure from " +
+    "<span class='mono'>" + esc(fname) + "</span>. Save to keep it as a clean .otl file.");
+}
+
+/* raw CR/LF inside "quoted" attribute values -> character refs that survive parsing */
+function preserveAttrNewlines(s){
+  let out = "", inq = false;
+  for(let i=0;i<s.length;i++){
+    const ch = s[i];
+    if(ch === '"'){ inq = !inq; out += ch; }
+    else if(inq && ch === "\n"){ out += "&#10;"; }
+    else if(inq && ch === "\r"){ out += "&#13;"; }
+    else out += ch;
+  }
+  return out;
+}
+/* the exporter double-escaped entities (&amp;apos; etc.) -> decode one extra pass */
+const _decoder = document.createElement("textarea");
+function decodeEntities(s){ _decoder.innerHTML = s; return _decoder.value; }
+
+/* plain-text note body -> faithful HTML using the editor's own formatting */
+function descToHtml(raw){
+  let text = decodeEntities(raw).replace(/\r\n/g,"\n").replace(/\r/g,"\n");
+  if(!text.trim()) return "";
+  const lines = text.split("\n");
+  const html = []; let para = [], bul = [];
+  const flushP = () => { if(para.length){ html.push("<p>"+para.join("<br>")+"</p>"); para = []; } };
+  const flushB = () => { if(bul.length){ html.push("<ul>"+bul.map(b=>"<li>"+b+"</li>").join("")+"</ul>"); bul = []; } };
+  for(const ln of lines){
+    if(ln.trim()===""){ flushP(); flushB(); continue; }
+    const head = ln.match(/^\s*(={2,}|-{2,})\s*(.+)$/);
+    const bullet = ln.match(/^(\s*)([-*\u2022])\s+(.+)$/);
+    if(head){ flushP(); flushB(); html.push("<p><b>"+esc(head[2].trim())+"</b></p>"); }
+    else if(bullet){ flushP(); bul.push(esc(bullet[3].trim())); }
+    else {
+      flushB();
+      const lead = ln.length - ln.replace(/^ +/,"").length;
+      para.push("&nbsp;".repeat(lead) + esc(ln.trim()));
+    }
+  }
+  flushP(); flushB();
+  return html.join("");
+}
+
+/* ---- .mpl binary fallback: best-effort title salvage ---- */
+function importMpl(bytes, fname){
+  const titles = extractMplTitles(bytes);
+  if(!titles.length) throw new Error("No readable note titles were found.");
+  uid = 0;
+  const root = N("Imported \u2014 " + fname, "folder", "", [], false);
+  root.expanded = true;
+  root.body = "<p>Best-effort import from <b>" + esc(fname) + "</b>. Recovered <b>" +
+    titles.length + "</b> note titles.</p><p>The binary .mpl format keeps page text and the " +
+    "folder hierarchy compressed in a way the importer can\u2019t read, so pages come in empty and " +
+    "flat. If you can export OPML/XML from the original app, import that instead for full text.</p>";
+  titles.forEach(t => root.children.push(N(t, "note", "")));
+  doc.tree = [root];
+  doc.meta = { title: fname.replace(/\.mpl$/i,""), font: doc.meta.font || "system" };
+  fileHandle = null;                          // imported -> not yet backed by an .otl file
+  $("#fileName").textContent = doc.meta.title + ".otl";
+  clearSearch();
+  dirty = true; paintState();
+  select(root.id);
+  showToast("Imported <b>" + titles.length + "</b> titles from <span class='mono'>" + esc(fname) +
+    "</span>. Bodies and structure couldn\u2019t be read from this binary format \u2014 export OPML for full notes.");
+}
+
+function extractMplTitles(bytes){
+  const BAD = new Set(["MainTable","VersionTable","HeaderTable","IconsTable",
+    "Node_MASTER","Node_DETAIL","Node_ITEM","Node_DATA","Node_AUTOINC","Node_MARKED","Node_IMAGE"]);
+  const SHAPE = /^[A-Za-z0-9][A-Za-z0-9 '/\-+.,()]*$/;
+  const VOWEL = /[aeiou]/;
+  // collect printable ASCII runs, keeping only those 3..28 chars long
+  const runs = [];
+  let cur = [];
+  const flush = () => { if(cur.length>=3 && cur.length<=28) runs.push(String.fromCharCode.apply(null, cur)); cur = []; };
+  for(let i=0;i<bytes.length;i++){
+    const b = bytes[i];
+    if(b>=32 && b<127){ cur.push(b); }
+    else flush();
+  }
+  flush();
+  function plausible(t){
+    t = t.trim();
+    if(t.length<3 || t.length>28 || BAD.has(t)) return false;
+    if(!SHAPE.test(t)) return false;
+    const letters = (t.match(/[A-Za-z]/g)||[]).length;
+    if(letters < t.length*0.6) return false;
+    if(t.indexOf(" ")>=0){                       // multi-word: needs one real-ish word
+      const toks = t.toLowerCase().split(/[^a-z]+/).filter(Boolean);
+      return toks.some(w => w.length>=3 && VOWEL.test(w));
+    }
+    if(!/^[a-z][a-z0-9]{3,}$/.test(t)) return false;   // single word: clean lowercase, precision first
+    const v = (t.match(/[aeiou]/g)||[]).length;
+    return v/t.length >= 0.25;
+  }
+  const seen = new Set(), out = [];
+  for(const s of runs){
+    const t = s.trim();
+    if(plausible(t) && !seen.has(t.toLowerCase())){ seen.add(t.toLowerCase()); out.push(t); }
+  }
+  return out;
+}
+
+/* ============================ toast ============================ */
+let toastTimer = null;
+function showToast(html, ms){
+  const t = $("#toast");
+  $("#toastBody").innerHTML = html;
+  t.classList.add("on");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("on"), ms || 9000);
+}
+$("#toastClose").onclick = () => $("#toast").classList.remove("on");
+
+/* ============================ format panel ============================ */
+const panel = $("#fmtPanel"), backdrop = $("#backdrop");
+function togglePanel(open){ panel.classList.toggle("open",open); backdrop.classList.toggle("on",open); }
+$("#fmtToggle").onclick = () => togglePanel(!panel.classList.contains("open"));
+$("#fmtClose").onclick = () => togglePanel(false);
+backdrop.onclick = () => togglePanel(false);
+
+/* ============================ drag & drop (rearrange / parent / unparent) ============================ */
+let dragId = null;
+let dropSpot = null;   // { id, pos }
+
+function clearDropMarks(){
+  tree.querySelectorAll(".drop-before,.drop-after,.drop-in")
+      .forEach(r => r.classList.remove("drop-before","drop-after","drop-in"));
+}
+tree.addEventListener("dragstart", e => {
+  const row = e.target.closest(".row");
+  if(!row || !row.draggable){ e.preventDefault(); return; }
+  dragId = row.dataset.id;
+  row.classList.add("dragging");
+  e.dataTransfer.effectAllowed = "move";
+  try{ e.dataTransfer.setData("text/plain", dragId); }catch(_){}
+});
+tree.addEventListener("dragover", e => {
+  if(!dragId) return;
+  const row = e.target.closest(".row");
+  if(!row){ clearDropMarks(); dropSpot = null; return; }
+  const id = row.dataset.id;
+  const drag = find(dragId);
+  if(!drag || isSelfOrDescendant(drag, id)){       // self or own descendant -> not allowed
+    clearDropMarks(); dropSpot = null;
+    e.dataTransfer.dropEffect = "none"; return;
+  }
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "move";
+  const r = row.getBoundingClientRect();
+  const y = (e.clientY - r.top) / r.height;
+  const pos = y < 0.28 ? "before" : y > 0.72 ? "after" : "inside";
+  if(dropSpot && dropSpot.id===id && dropSpot.pos===pos) return;   // unchanged
+  clearDropMarks();
+  row.classList.add(pos==="inside" ? "drop-in" : pos==="before" ? "drop-before" : "drop-after");
+  dropSpot = { id, pos };
+});
+tree.addEventListener("dragleave", e => {
+  if(!e.relatedTarget || !tree.contains(e.relatedTarget)){ clearDropMarks(); dropSpot = null; }
+});
+tree.addEventListener("drop", e => {
+  e.preventDefault();
+  if(dragId && dropSpot){
+    const moved = moveNode(dragId, dropSpot.id, dropSpot.pos);
+    if(moved){ const keep = dragId; renderTree(); select(keep); }
+  }
+  endDrag();
+});
+tree.addEventListener("dragend", endDrag);
+function endDrag(){
+  clearDropMarks();
+  const d = tree.querySelector(".row.dragging");
+  if(d) d.classList.remove("dragging");
+  dragId = null; dropSpot = null;
+}
+
+/* ============================ boot ============================ */
+applyFont(doc.meta.font || "system");
+renderTree();
+select(find2("tweak problem") || doc.tree[0].id);
+paintState();
+function find2(title){ let id=null; walk(doc.tree, n=>{ if(n.title===title) id=n.id; }); return id; }
+</script>

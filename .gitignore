@@ -1,0 +1,42 @@
+# ---- OS cruft ----
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ---- Editor / IDE ----
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# ---- Local outline data (don't commit personal notes) ----
+# Remove/adjust if you DO want to track sample .otl files in the repo.
+*.otl
+
+# ---- Import sources (usually personal exports) ----
+*.mpl
+barbeq.xml
+
+# ---- Logs & temp ----
+*.log
+*.tmp
+*.bak
+
+# ---- Future tooling (Tauri / Electron / Node), harmless if unused ----
+node_modules/
+dist/
+build/
+out/
+target/
+src-tauri/target/
+.env
+.env.local
