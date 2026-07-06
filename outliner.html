@@ -846,8 +846,9 @@ function setFileName(name){ $("#fileName").textContent = name; }
 
 $("#btnNew").onclick = () => {
   if(dirty && !confirm("Discard unsaved changes and start a new outline?")) return;
+  selId = null;                                 // drop stale selection so we don't flush old editor content into the new tree
   uid = 0;
-  doc.tree = [ N("Untitled outline","folder","<p>Empty outline. Add notes from the sidebar.</p>",[], false) ];
+  doc.tree = [ N("Untitled","folder","<p>Empty outline. Add notes from the sidebar.</p>",[], false) ];
   doc.tree[0].expanded = true;
   doc.meta = { title:"untitled", font: doc.meta.font || "system" };
   fileHandle = null;
@@ -861,6 +862,7 @@ $("#btnNew").onclick = () => {
 function loadOtlText(text, name, handle){
   const parsed = JSON.parse(text);
   if(!parsed.tree) throw new Error("no tree");
+  selId = null;                                 // drop stale selection so we don't flush old editor content into the loaded tree
   uid = 0;
   (function rec(nodes){ for(const n of nodes){ n.id=nid(); if(!n.icon)n.icon="note";
     if(typeof n.expanded!=="boolean")n.expanded=false; if(!Array.isArray(n.children))n.children=[];
