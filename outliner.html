@@ -858,6 +858,29 @@ const supportsFSA = typeof window.showSaveFilePicker === "function";
 const OTL_TYPES = [{ description:"Sift outline", accept:{ "application/json":[".otl",".json"] } }];
 function setFileName(name){ $("#fileName").textContent = name; }
 
+/* Remember the folder of the last opened/saved file and reuse it as the
+   picker's start location. A file handle passed to startIn opens the picker
+   in that file's folder. Handles aren't JSON-serializable, so persist across
+   sessions in IndexedDB (structured clone). */
+let lastFileHandle = null;
+const HANDLE_DB="sift", HANDLE_STORE="handles", HANDLE_KEY="lastFile";
+function idbHandle(mode, val){
+  return new Promise((res, rej) => {
+    const rq = indexedDB.open(HANDLE_DB, 1);
+    rq.onupgradeneeded = () => rq.result.createObjectStore(HANDLE_STORE);
+    rq.onerror = () => rej(rq.error);
+    rq.onsuccess = () => {
+      const db = rq.result, tx = db.transaction(HANDLE_STORE, mode), st = tx.objectStore(HANDLE_STORE);
+      const op = mode==="readwrite" ? st.put(val, HANDLE_KEY) : st.get(HANDLE_KEY);
+      op.onsuccess = () => res(op.result); op.onerror = () => rej(op.error);
+      tx.oncomplete = () => db.close();
+    };
+  });
+}
+function rememberFolder(h){ if(!h) return; lastFileHandle=h; idbHandle("readwrite", h).catch(()=>{}); }
+function pickerOpts(o){ return lastFileHandle ? Object.assign({ startIn:lastFileHandle }, o) : o; }
+if(supportsFSA) idbHandle("readonly").then(h => { if(h) lastFileHandle=h; }).catch(()=>{});
+
 $("#btnNew").onclick = () => {
   if(dirty && !confirm("Discard unsaved changes and start a new outline?")) return;
   selId = null;                                 // drop stale selection so we don't flush old editor content into the new tree
@@ -895,9 +918,10 @@ $("#btnOpen").onclick = async () => {
   if(dirty && !confirm("Discard unsaved changes and open another file?")) return;
   if(supportsFSA){
     try{
-      const [handle] = await window.showOpenFilePicker({ types: OTL_TYPES, multiple:false });
+      const [handle] = await window.showOpenFilePicker(pickerOpts({ types: OTL_TYPES, multiple:false }));
       const file = await handle.getFile();
       loadOtlText(await file.text(), file.name, handle);
+      rememberFolder(handle);
     }catch(err){
       if(err && err.name==="AbortError") return;         // user cancelled
       $("#fileInput").click();                            // policy-blocked -> fallback picker
@@ -958,9 +982,10 @@ async function doSaveAs(){
   const suggested = (doc.meta.title || "outline") + ".otl";
   if(supportsFSA){
     try{
-      const handle = await window.showSaveFilePicker({ suggestedName: suggested, types: OTL_TYPES });
+      const handle = await window.showSaveFilePicker(pickerOpts({ suggestedName: suggested, types: OTL_TYPES }));
       await writeToHandle(handle, text);
       fileHandle = handle;
+      rememberFolder(handle);
       doc.meta.title = handle.name.replace(/\.otl$|\.json$/i,"");
       setFileName(handle.name);
       dirty=false; paintState();
