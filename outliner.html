@@ -722,7 +722,7 @@ function beginRename(row, n){
   inp.className = "title-edit"; inp.value = n.title;
   row.replaceChild(inp, ti); inp.focus(); inp.select();
   const commit = () => { const v=inp.value.trim(); if(v){ n.title=v; markDirty(); } renderTree();
-    if(n.id===selId) renderCrumbs(); };
+    if(n.id===selId){ pageTitle.textContent=n.title; renderCrumbs(); } };
   inp.onblur = commit;
   inp.onkeydown = e => { if(e.key==="Enter"){ e.preventDefault(); inp.blur(); }
     if(e.key==="Escape"){ inp.value=n.title; inp.blur(); } };
@@ -982,6 +982,11 @@ document.addEventListener("keydown", e => {
   if(t && (t.tagName==="INPUT" || t.tagName==="TEXTAREA" || t.isContentEditable)) return;
   if(e.key==="Delete"){ e.preventDefault(); deleteNode(); }
   else if(e.key==="Insert"){ e.preventDefault(); addChildNode(); }
+  else if(e.key==="F2"){
+    const n = find(selId); if(!n) return;
+    const row = tree.querySelector('.row[data-id="'+selId+'"]');
+    if(row){ e.preventDefault(); beginRename(row, n); }
+  }
 });
 
 /* ============================ search wiring ============================ */
