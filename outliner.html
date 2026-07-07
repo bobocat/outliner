@@ -428,10 +428,10 @@
           <button class="mini" id="btnAdd" title="New note below selection">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 5v14M5 12h14"/></svg>
           </button>
-          <button class="mini" id="btnChild" title="New note inside selection">
+          <button class="mini" id="btnChild" title="New note inside selection (Ins)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M5 5v8a3 3 0 0 0 3 3h6"/><path d="M11 13l3 3-3 3"/></svg>
           </button>
-          <button class="mini" id="btnDel" title="Delete selection">
+          <button class="mini" id="btnDel" title="Delete selection (Del)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13"/></svg>
           </button>
         </div>
@@ -802,13 +802,13 @@ $("#btnAdd").onclick = () => {
   arr.splice(i<0?arr.length:i+1, 0, node);
   markDirty(); select(node.id);
 };
-$("#btnChild").onclick = () => {
+function addChildNode(){
   const n = find(selId); if(!n) return;
   const node = N("New note","note","");
   n.children.push(node); n.expanded=true; if(n.icon==="note") n.icon="folder";
   markDirty(); select(node.id);
-};
-$("#btnDel").onclick = () => {
+}
+function deleteNode(){
   if(!selId) return;
   const n = find(selId);
   const count = 1 + descendants(n);
@@ -819,7 +819,9 @@ $("#btnDel").onclick = () => {
   markDirty();
   const next = arr[i] || arr[i-1] || doc.tree[0];
   select(next.id);
-};
+}
+$("#btnChild").onclick = addChildNode;
+$("#btnDel").onclick = deleteNode;
 function descendants(n){ let c=0; walk(n.children, ()=>c++); return c; }
 
 /* ============================ dirty / status ============================ */
@@ -967,6 +969,19 @@ document.addEventListener("keydown", e => {
     e.preventDefault();
     if(e.shiftKey) doSaveAs(); else doSave();
   }
+});
+
+/* Del/Ins act on the current node while the pointer is over the outline panel */
+const sidePanel = $(".side");
+let overSide = false;
+sidePanel.addEventListener("mouseenter", () => overSide=true);
+sidePanel.addEventListener("mouseleave", () => overSide=false);
+document.addEventListener("keydown", e => {
+  if(!overSide || e.ctrlKey||e.metaKey||e.altKey) return;
+  const t = e.target;
+  if(t && (t.tagName==="INPUT" || t.tagName==="TEXTAREA" || t.isContentEditable)) return;
+  if(e.key==="Delete"){ e.preventDefault(); deleteNode(); }
+  else if(e.key==="Insert"){ e.preventDefault(); addChildNode(); }
 });
 
 /* ============================ search wiring ============================ */

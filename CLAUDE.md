@@ -2,6 +2,10 @@
 
 Guidance for Claude Code when working in this repository.
 
+## Git workflow
+
+Commit and push directly to the `main` branch. Do **not** create feature branches or open PRs for changes in this repo — work on `main` and push there.
+
 ## What this is
 
 **Sift** is a tree-style note outliner that ships as a **single, self-contained HTML file** (`outliner.html`, ~58 KB, ~1300 lines). Open it in a browser and you get a collapsible outline tree on the left and a rich-text editor on the right. The entire document — every note and its text — saves to one human-readable `.otl` file (UTF-8 JSON).
