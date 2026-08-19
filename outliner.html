@@ -279,6 +279,12 @@
   .editor code, .editor .mono{ font-family:var(--mono); font-size:.86em; background:var(--paper-2);
     padding:.05em .35em; border-radius:4px; }
   .editor .indent{ display:block; padding-left:2.2em; }
+  .editor a.notelink{
+    color:var(--signal-ink); cursor:pointer;
+    text-decoration:underline; text-decoration-style:dotted;
+    text-decoration-color:rgba(180,95,22,.55); text-underline-offset:2px;
+  }
+  .editor a.notelink:hover{ background:#f5e7d4; border-radius:3px; text-decoration-style:solid; }
   .editor:empty::before{
     content:"Empty page. Start typing, or press B for bold, • for a bullet, Tab to indent.";
     color:#b7b0a1; font-style:italic;
@@ -349,6 +355,41 @@
     letter-spacing:.08em; color:var(--chrome-dim); min-height:14px; }
   .title mark{ background:rgba(226,129,47,.32); color:inherit; border-radius:2px; padding:0 1px; }
   .row.nomatch .title{ opacity:.4; }
+
+  /* ---------- note link picker ---------- */
+  .linkpick{
+    position:fixed; inset:0; z-index:35; background:rgba(0,0,0,.38);
+    display:none; align-items:flex-start; justify-content:center;
+  }
+  .linkpick.on{ display:flex; }
+  .lp-box{
+    margin-top:12vh; width:440px; max-width:92vw;
+    background:#1c2026; color:var(--chrome-txt); border:1px solid #000; border-radius:10px;
+    box-shadow:0 30px 80px -20px rgba(0,0,0,.7);
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  .lp-head{ padding:10px; border-bottom:1px solid #2a2f37; }
+  .lp-head input{
+    width:100%; height:32px; padding:0 10px; font-family:var(--ui); font-size:12.5px;
+    color:var(--chrome-txt); background:#171a1f; border:1px solid #2b313a; border-radius:7px; outline:none;
+  }
+  .lp-head input:focus{ border-color:var(--signal); }
+  .lp-head input::placeholder{ color:#5b626d; }
+  .lp-list{ max-height:46vh; overflow:auto; padding:6px; }
+  .lp-list::-webkit-scrollbar{ width:11px; }
+  .lp-list::-webkit-scrollbar-thumb{ background:#3a414c; border-radius:6px; border:3px solid #1c2026; }
+  .lp-row{
+    display:flex; align-items:center; gap:6px; height:28px; padding:0 8px;
+    border-radius:6px; cursor:pointer; font-size:12.5px; user-select:none;
+  }
+  .lp-row:hover{ background:var(--graphite-3); }
+  .lp-row.act{ background:var(--graphite-3); box-shadow:inset 0 0 0 1.5px var(--signal); }
+  .lp-row .t{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .lp-row .path{
+    flex:1; min-width:0; text-align:right; font-family:var(--mono); font-size:10px;
+    color:var(--chrome-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .lp-empty{ padding:14px 12px; font-size:12px; color:var(--chrome-dim); }
 
   /* ---------- font selector ---------- */
   .fontsel{ position:relative; }
@@ -453,6 +494,9 @@
         <button class="ebtn" id="fBullet" title="Bullet list">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="5" cy="7" r="1.4" fill="currentColor"/><circle cx="5" cy="12" r="1.4" fill="currentColor"/><circle cx="5" cy="17" r="1.4" fill="currentColor"/><path d="M10 7h10M10 12h10M10 17h10"/></svg>
         </button>
+        <button class="ebtn" id="fLink" title="Link to a note (Ctrl+K) — inside a link, removes it">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M10 14a4.5 4.5 0 0 0 6.4 0l3.2-3.2a4.5 4.5 0 0 0-6.4-6.4L11.5 6"/><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3.2 3.2a4.5 4.5 0 0 0 6.4 6.4l1.7-1.6"/></svg>
+        </button>
         <div class="edivide"></div>
         <button class="ebtn" id="fOutdent" title="Outdent (Shift+Tab)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M20 6H10M20 12H13M20 18H10M7 9l-3 3 3 3"/></svg>
@@ -528,6 +572,16 @@
 
 <input type="file" id="fileInput" accept=".otl,.json,application/json" style="display:none" />
 <input type="file" id="mplInput" accept=".opml,.xml,.mpl" style="display:none" />
+
+<!-- note link picker -->
+<div class="linkpick" id="linkPick">
+  <div class="lp-box">
+    <div class="lp-head">
+      <input id="lpInput" type="text" placeholder="Link to note… type to filter, ↑↓ + Enter" spellcheck="false" />
+    </div>
+    <div class="lp-list" id="lpList"></div>
+  </div>
+</div>
 
 <div class="toast" id="toast"><span class="tclose" id="toastClose">✕</span><span id="toastBody"></span></div>
 
@@ -791,6 +845,7 @@ $("#fOutdent").onclick= () => cmd("outdent");
 editor.addEventListener("keydown", e => {
   if(e.key==="Tab"){ e.preventDefault(); cmd(e.shiftKey?"outdent":"indent"); }
   if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==="b"){ e.preventDefault(); cmd("bold"); }
+  if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==="k"){ e.preventDefault(); linkCommand(); }
 });
 editor.addEventListener("keyup", syncToolbar);
 editor.addEventListener("mouseup", syncToolbar);
@@ -798,6 +853,7 @@ function syncToolbar(){
   try{
     $("#fBold").classList.toggle("active", document.queryCommandState("bold"));
     $("#fBullet").classList.toggle("active", document.queryCommandState("insertUnorderedList"));
+    $("#fLink").classList.toggle("active", !!noteLinkAtSelection());
   }catch(e){}
 }
 function updateWords(){
@@ -805,6 +861,141 @@ function updateWords(){
   const w = t ? t.split(/\s+/).length : 0;
   $("#wcount").textContent = w + (w===1?" word":" words");
 }
+
+/* ============================ note links ============================ */
+/* Body text can link to another note: <a class="notelink" data-note="id">.
+   Ctrl+K (or the toolbar button) opens a picker; with the caret inside an
+   existing link the same command removes it. Click a link to jump. */
+const linkPick = $("#linkPick"), lpInput = $("#lpInput"), lpList = $("#lpList");
+let savedRange = null;         // editor selection, saved while the picker is open
+let lpItems = [], lpIdx = 0;
+
+function noteLinkAtSelection(){
+  const sel = getSelection();
+  let n = sel.rangeCount ? sel.anchorNode : null;
+  if(!n || !editor.contains(n)) return null;
+  while(n && n!==editor){
+    if(n.nodeType===1 && n.matches("a[data-note]")) return n;
+    n = n.parentNode;
+  }
+  return null;
+}
+function linkCommand(){
+  const a = noteLinkAtSelection();
+  if(a){ removeNoteLink(a); return; }
+  openLinkPicker();
+}
+function removeNoteLink(a){
+  while(a.firstChild) a.parentNode.insertBefore(a.firstChild, a);
+  a.remove();
+  markDirty(); syncToolbar();
+  showToast("Link removed — the text stays.");
+}
+function openLinkPicker(){
+  const sel = getSelection();
+  savedRange = (sel.rangeCount && editor.contains(sel.anchorNode))
+    ? sel.getRangeAt(0).cloneRange() : null;
+  lpInput.value = "";
+  buildLpList("");
+  linkPick.classList.add("on");
+  lpInput.focus();
+}
+function closeLinkPicker(){ linkPick.classList.remove("on"); }
+function buildLpList(q){
+  q = q.trim().toLowerCase();
+  lpList.innerHTML = ""; lpItems = []; lpIdx = 0;
+  (function rec(nodes, depth, trail){
+    for(const n of nodes){
+      if(n.id!==selId && (!q || n.title.toLowerCase().includes(q))){
+        const row = document.createElement("div");
+        row.className = "lp-row";
+        row.style.paddingLeft = (8 + (q ? 0 : depth*14)) + "px";
+        const ic = document.createElement("span");
+        ic.className = "icn"; ic.innerHTML = ICON[n.icon]||ICON.note;
+        row.appendChild(ic);
+        const t = document.createElement("span");
+        t.className = "t"; t.textContent = n.title;
+        row.appendChild(t);
+        if(q && trail.length){
+          const p = document.createElement("span");
+          p.className = "path"; p.textContent = trail.map(x=>x.title).join(" › ");
+          row.appendChild(p);
+        }
+        const i = lpItems.length;
+        row.onmouseenter = () => { lpIdx = i; paintLpSel(false); };
+        row.onclick = () => chooseLink(n.id);
+        lpItems.push({ id:n.id, el:row });
+        lpList.appendChild(row);
+      }
+      rec(n.children, depth+1, [...trail, n]);
+    }
+  })(doc.tree, 0, []);
+  if(!lpItems.length){
+    const d = document.createElement("div");
+    d.className = "lp-empty";
+    d.textContent = q ? "No notes match." : "No other notes to link to.";
+    lpList.appendChild(d);
+  }
+  paintLpSel(false);
+}
+function paintLpSel(scroll){
+  lpItems.forEach((it,i) => it.el.classList.toggle("act", i===lpIdx));
+  if(scroll && lpItems[lpIdx]) lpItems[lpIdx].el.scrollIntoView({ block:"nearest" });
+}
+lpInput.addEventListener("input", () => buildLpList(lpInput.value));
+lpInput.addEventListener("keydown", e => {
+  if(e.key==="ArrowDown"){ e.preventDefault(); if(lpIdx<lpItems.length-1){ lpIdx++; paintLpSel(true); } }
+  else if(e.key==="ArrowUp"){ e.preventDefault(); if(lpIdx>0){ lpIdx--; paintLpSel(true); } }
+  else if(e.key==="Enter"){ e.preventDefault(); if(lpItems[lpIdx]) chooseLink(lpItems[lpIdx].id); }
+  else if(e.key==="Escape"){ e.preventDefault(); closeLinkPicker(); editor.focus(); }
+});
+linkPick.addEventListener("mousedown", e => { if(e.target===linkPick) closeLinkPicker(); });
+
+function chooseLink(id){
+  const target = find(id);
+  closeLinkPicker();
+  if(!target) return;
+  editor.focus();
+  const sel = getSelection();
+  sel.removeAllRanges();
+  if(savedRange){ sel.addRange(savedRange); }
+  else {                                    // no editor selection -> append at the end
+    const r = document.createRange();
+    r.selectNodeContents(editor); r.collapse(false);
+    sel.addRange(r);
+  }
+  if(sel.isCollapsed){                      // nothing selected -> the title becomes the text
+    document.execCommand("insertText", false, target.title);
+    const r = sel.getRangeAt(0).cloneRange();
+    r.setStart(r.endContainer, Math.max(0, r.endOffset - target.title.length));
+    sel.removeAllRanges(); sel.addRange(r);
+  }
+  // createLink with a temp href, then rewrite every anchor it made (a selection
+  // across blocks produces several) into the notelink form
+  const token = "#notelink-pending";
+  document.execCommand("createLink", false, token);
+  editor.querySelectorAll('a[href="'+token+'"]').forEach(a => {
+    a.removeAttribute("href");
+    a.className = "notelink";
+    a.dataset.note = id;
+    a.title = "Go to “"+target.title+"”";
+  });
+  getSelection().collapseToEnd();
+  markDirty(); syncToolbar(); updateWords();
+}
+$("#fLink").onmousedown = e => e.preventDefault();   // keep the editor selection
+$("#fLink").onclick = linkCommand;
+
+/* follow a link: click jumps to the note it points at */
+editor.addEventListener("click", e => {
+  const a = e.target.closest("a[data-note]");
+  if(!a || !editor.contains(a)) return;
+  e.preventDefault();
+  const n = find(a.dataset.note);
+  if(n) select(n.id);
+  else showToast("That note no longer exists — this link points nowhere. " +
+                 "Put the caret in it and press <span class='mono'>Ctrl+K</span> to remove it.");
+});
 
 /* ============================ node ops ============================ */
 $("#btnAdd").onclick = () => {
@@ -901,9 +1092,17 @@ function loadOtlText(text, name, handle){
   if(!parsed.tree) throw new Error("no tree");
   selId = null;                                 // drop stale selection so we don't flush old editor content into the loaded tree
   uid = 0;
-  (function rec(nodes){ for(const n of nodes){ n.id=nid(); if(!n.icon)n.icon="note";
+  // keep ids from the file (note links reference them); only mint fresh ids for
+  // missing/duplicate ones, and push uid past the highest "n<number>" id seen
+  const seen = new Set();
+  (function rec(nodes){ for(const n of nodes){ if(!n.icon)n.icon="note";
     if(typeof n.expanded!=="boolean")n.expanded=false; if(!Array.isArray(n.children))n.children=[];
+    if(typeof n.id==="string" && n.id && !seen.has(n.id)){
+      seen.add(n.id);
+      const m = /^n(\d+)$/.exec(n.id); if(m) uid = Math.max(uid, +m[1]);
+    } else n.id = "";
     rec(n.children); } })(parsed.tree);
+  (function rec(nodes){ for(const n of nodes){ if(!n.id) n.id=nid(); rec(n.children); } })(parsed.tree);
   doc.tree = parsed.tree;
   doc.meta = parsed.meta || { title: name.replace(/\.otl$|\.json$/i,"") };
   fileHandle = handle || null;

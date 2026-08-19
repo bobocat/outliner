@@ -20,6 +20,11 @@ For the best experience (in-place Save — see below), use **Chrome** or **Edge*
   note, task) plus a "marked" flag.
 - **Rich-text editor** per note: bold (`Ctrl+B`), bullet lists, and
   indent/outdent with `Tab` / `Shift+Tab`.
+- **Note links**: select text and press `Ctrl+K` (or the 🔗 toolbar button) to
+  link it to another note — a searchable picker chooses the target. With
+  nothing selected, the target's title is inserted as the link text. Click a
+  link to jump to that note; `Ctrl+K` with the caret inside a link removes it
+  (the text stays).
 - **Search** the outline by title *and* body text, with matches highlighted and
   a live match count.
 - **Drag and drop** to rearrange notes: drop on a row's top/bottom edge to
@@ -42,6 +47,7 @@ For the best experience (in-place Save — see below), use **Chrome** or **Edge*
 | `Ctrl+S` | Save (overwrite the opened file) |
 | `Ctrl+Shift+S` | Save As |
 | `Ctrl+B` | Bold (in the editor) |
+| `Ctrl+K` | Link the selection to another note; inside a link, remove it |
 | `Tab` / `Shift+Tab` | Indent / outdent (in the editor) |
 | `Esc` | Clear search |
 | Double-click a note title | Rename it in the tree |
@@ -69,8 +75,12 @@ An `.otl` file is a single UTF-8 JSON document — a nested tree of notes:
 }
 ```
 
-Note bodies are stored as a small HTML subset (paragraphs, `<br>`, bold, and
-bullet lists), which is what the editor produces.
+Note bodies are stored as a small HTML subset (paragraphs, `<br>`, bold,
+bullet lists, and note links), which is what the editor produces. A note link
+is `<a class="notelink" data-note="id">text</a>`, where `data-note` is the
+target note's `id`. Ids are preserved on load so links survive save/open
+round-trips; a link whose target was deleted stays in the text and tells you
+so when clicked.
 
 ## Browser support and caveats
 

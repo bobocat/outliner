@@ -32,7 +32,8 @@ When editing, **match the surrounding idiom**: terse single-line helpers, `$`/`$
 ### Core data model
 
 - The whole document is a single global `doc` object: `{ format, version, meta:{title,font}, tree:[...] }`.
-- Each note node: `{ id, title, icon, marked, expanded, body, children:[] }`. `body` is a small HTML subset (paragraphs, `<br>`, bold, bullet lists) produced by the editor. Icons are one of `folder | doc | note | task` (see the `ICON` map).
+- Each note node: `{ id, title, icon, marked, expanded, body, children:[] }`. `body` is a small HTML subset (paragraphs, `<br>`, bold, bullet lists, note links) produced by the editor. Icons are one of `folder | doc | note | task` (see the `ICON` map).
+- **Note links**: body text can link to another note as `<a class="notelink" data-note="<id>">text</a>`. Because links reference node ids, `loadOtlText` **preserves ids from the file** (minting fresh ones only for missing/duplicate ids and bumping `uid` past the highest `n<number>` seen) — don't reintroduce blanket id regeneration on load.
 - `N(...)` constructs a node; `nid()`/`uid` generate ids.
 
 ### Key functions (all in the `<script>` block)
@@ -40,6 +41,7 @@ When editing, **match the surrounding idiom**: terse single-line helpers, `$`/`$
 - **Tree traversal:** `walk`, `find`, `pathTo`, `parentArr`, `isSelfOrDescendant`, `descendants`.
 - **Rendering:** `renderTree` → `buildLevel`, `renderCrumbs`, `refreshStatus`, `paintState`.
 - **Selection / editing:** `select`, `flushEditor`, `beginRename`, `cmd` (wraps `document.execCommand`), `syncToolbar`, `updateWords`.
+- **Note links:** `linkCommand` (Ctrl+K / toolbar — inserts a link via the picker, or removes the one under the caret), `openLinkPicker` / `buildLpList` / `chooseLink` (the searchable target picker), `noteLinkAtSelection`, `removeNoteLink`; an editor `click` listener follows `a[data-note]` to its note.
 - **Search:** `computeSearch`, `hiTitle`, `updateSearchCount`, `clearSearch` — searches titles *and* body text, highlights matches, keeps ancestors expanded.
 - **Dirty tracking:** `markDirty` / `dirty` flag / `paintState` drive the saved/unsaved indicator.
 - **Save / load:** `otlText` (serialize), `loadOtlText` (parse), `doSave` / `doSaveAs`, `writeToHandle`, `downloadText`. In-place save keeps a `FileSystemFileHandle`.
@@ -52,7 +54,7 @@ When editing, **match the surrounding idiom**: terse single-line helpers, `$`/`$
 - **Formatting uses `document.execCommand`** — deprecated but works in all current browsers. The README notes a future rework could replace it; don't casually rip it out.
 - Escape user/HTML content with `esc()` where building markup by hand.
 - Drag-and-drop is **mouse-only** (no touch).
-- Keyboard shortcuts: `Ctrl+S` save, `Ctrl+Shift+S` save as, `Ctrl+B` bold, `Tab`/`Shift+Tab` indent/outdent in the editor, `Esc` clears search, double-click a title to rename.
+- Keyboard shortcuts: `Ctrl+S` save, `Ctrl+Shift+S` save as, `Ctrl+B` bold, `Ctrl+K` note link, `Tab`/`Shift+Tab` indent/outdent in the editor, `Esc` clears search, double-click a title to rename.
 
 ## Verifying changes
 
