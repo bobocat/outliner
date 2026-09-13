@@ -25,6 +25,9 @@ For the best experience (in-place Save — see below), use **Chrome** or **Edge*
   nothing selected, the target's title is inserted as the link text. Click a
   link to jump to that note; `Ctrl+K` with the caret inside a link removes it
   (the text stays).
+- **Web links**: in the same `Ctrl+K` picker, paste a URL (`https://…`,
+  `http://…`, `mailto:…`, or a bare `www.…`) and press Enter to link the
+  selection to it. Web links show a ↗ and open in a new tab when clicked.
 - **Search** the outline by title *and* body text, with matches highlighted and
   a live match count.
 - **Drag and drop** to rearrange notes: drop on a row's top/bottom edge to
@@ -47,7 +50,7 @@ For the best experience (in-place Save — see below), use **Chrome** or **Edge*
 | `Ctrl+S` | Save (overwrite the opened file) |
 | `Ctrl+Shift+S` | Save As |
 | `Ctrl+B` | Bold (in the editor) |
-| `Ctrl+K` | Link the selection to another note; inside a link, remove it |
+| `Ctrl+K` | Link the selection to another note or a pasted URL; inside a link, remove it |
 | `Tab` / `Shift+Tab` | Indent / outdent (in the editor) |
 | `Esc` | Clear search |
 | Double-click a note title | Rename it in the tree |
@@ -80,7 +83,8 @@ bullet lists, and note links), which is what the editor produces. A note link
 is `<a class="notelink" data-note="id">text</a>`, where `data-note` is the
 target note's `id`. Ids are preserved on load so links survive save/open
 round-trips; a link whose target was deleted stays in the text and tells you
-so when clicked.
+so when clicked. A web link is `<a class="extlink" href="https://…">text</a>`;
+only `http`, `https`, and `mailto` addresses are opened.
 
 ## Browser support and caveats
 

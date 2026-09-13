@@ -285,6 +285,12 @@
     text-decoration-color:rgba(180,95,22,.55); text-underline-offset:2px;
   }
   .editor a.notelink:hover{ background:#f5e7d4; border-radius:3px; text-decoration-style:solid; }
+  .editor a.extlink{
+    color:var(--signal-ink); cursor:pointer; text-decoration:underline;
+    text-decoration-color:rgba(180,95,22,.55); text-underline-offset:2px;
+  }
+  .editor a.extlink::after{ content:"↗"; font-size:.75em; margin-left:1px; }
+  .editor a.extlink:hover{ background:#f5e7d4; border-radius:3px; text-decoration-color:currentColor; }
   .editor:empty::before{
     content:"Empty page. Start typing, or press B for bold, • for a bullet, Tab to indent.";
     color:#b7b0a1; font-style:italic;
@@ -494,7 +500,7 @@
         <button class="ebtn" id="fBullet" title="Bullet list">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="5" cy="7" r="1.4" fill="currentColor"/><circle cx="5" cy="12" r="1.4" fill="currentColor"/><circle cx="5" cy="17" r="1.4" fill="currentColor"/><path d="M10 7h10M10 12h10M10 17h10"/></svg>
         </button>
-        <button class="ebtn" id="fLink" title="Link to a note (Ctrl+K) — inside a link, removes it">
+        <button class="ebtn" id="fLink" title="Link to a note or URL (Ctrl+K) — inside a link, removes it">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M10 14a4.5 4.5 0 0 0 6.4 0l3.2-3.2a4.5 4.5 0 0 0-6.4-6.4L11.5 6"/><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3.2 3.2a4.5 4.5 0 0 0 6.4 6.4l1.7-1.6"/></svg>
         </button>
         <div class="edivide"></div>
@@ -577,7 +583,7 @@
 <div class="linkpick" id="linkPick">
   <div class="lp-box">
     <div class="lp-head">
-      <input id="lpInput" type="text" placeholder="Link to note… type to filter, ↑↓ + Enter" spellcheck="false" />
+      <input id="lpInput" type="text" placeholder="Link to note… type to filter, or paste a URL · ↑↓ + Enter" spellcheck="false" />
     </div>
     <div class="lp-list" id="lpList"></div>
   </div>
@@ -853,7 +859,7 @@ function syncToolbar(){
   try{
     $("#fBold").classList.toggle("active", document.queryCommandState("bold"));
     $("#fBullet").classList.toggle("active", document.queryCommandState("insertUnorderedList"));
-    $("#fLink").classList.toggle("active", !!noteLinkAtSelection());
+    $("#fLink").classList.toggle("active", !!linkAtSelection());
   }catch(e){}
 }
 function updateWords(){
@@ -863,29 +869,39 @@ function updateWords(){
 }
 
 /* ============================ note links ============================ */
-/* Body text can link to another note: <a class="notelink" data-note="id">.
-   Ctrl+K (or the toolbar button) opens a picker; with the caret inside an
-   existing link the same command removes it. Click a link to jump. */
+/* Body text can link to another note: <a class="notelink" data-note="id">,
+   or to a web page: <a class="extlink" href="https://…">.
+   Ctrl+K (or the toolbar button) opens a picker — type to filter notes, or
+   paste a URL to link to it; with the caret inside an existing link the same
+   command removes it. Click a link to follow it. */
 const linkPick = $("#linkPick"), lpInput = $("#lpInput"), lpList = $("#lpList");
 let savedRange = null;         // editor selection, saved while the picker is open
 let lpItems = [], lpIdx = 0;
+const GLOBE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>';
 
-function noteLinkAtSelection(){
+/* only http(s)/mailto count as links; a bare www.… gets https:// */
+function urlFrom(s){
+  s = (s||"").trim();
+  if(/^(https?:\/\/|mailto:)\S+$/i.test(s)) return s;
+  if(/^www\.\S+\.\S+$/i.test(s)) return "https://" + s;
+  return null;
+}
+function linkAtSelection(){
   const sel = getSelection();
   let n = sel.rangeCount ? sel.anchorNode : null;
   if(!n || !editor.contains(n)) return null;
   while(n && n!==editor){
-    if(n.nodeType===1 && n.matches("a[data-note]")) return n;
+    if(n.nodeType===1 && n.matches("a[data-note], a.extlink")) return n;
     n = n.parentNode;
   }
   return null;
 }
 function linkCommand(){
-  const a = noteLinkAtSelection();
-  if(a){ removeNoteLink(a); return; }
+  const a = linkAtSelection();
+  if(a){ removeLink(a); return; }
   openLinkPicker();
 }
-function removeNoteLink(a){
+function removeLink(a){
   while(a.firstChild) a.parentNode.insertBefore(a.firstChild, a);
   a.remove();
   markDirty(); syncToolbar();
@@ -902,8 +918,24 @@ function openLinkPicker(){
 }
 function closeLinkPicker(){ linkPick.classList.remove("on"); }
 function buildLpList(q){
-  q = q.trim().toLowerCase();
   lpList.innerHTML = ""; lpItems = []; lpIdx = 0;
+  const url = urlFrom(q);
+  if(url){                                  // a URL -> offer to link to it
+    const row = document.createElement("div");
+    row.className = "lp-row";
+    const ic = document.createElement("span");
+    ic.className = "icn"; ic.innerHTML = GLOBE;
+    row.appendChild(ic);
+    const t = document.createElement("span");
+    t.className = "t"; t.textContent = "Link to " + url;
+    row.appendChild(t);
+    row.onclick = () => chooseLink({ url });
+    lpItems.push({ url, el:row });
+    lpList.appendChild(row);
+    paintLpSel(false);
+    return;
+  }
+  q = q.trim().toLowerCase();
   (function rec(nodes, depth, trail){
     for(const n of nodes){
       if(n.id!==selId && (!q || n.title.toLowerCase().includes(q))){
@@ -923,7 +955,7 @@ function buildLpList(q){
         }
         const i = lpItems.length;
         row.onmouseenter = () => { lpIdx = i; paintLpSel(false); };
-        row.onclick = () => chooseLink(n.id);
+        row.onclick = () => chooseLink({ id:n.id });
         lpItems.push({ id:n.id, el:row });
         lpList.appendChild(row);
       }
@@ -946,15 +978,16 @@ lpInput.addEventListener("input", () => buildLpList(lpInput.value));
 lpInput.addEventListener("keydown", e => {
   if(e.key==="ArrowDown"){ e.preventDefault(); if(lpIdx<lpItems.length-1){ lpIdx++; paintLpSel(true); } }
   else if(e.key==="ArrowUp"){ e.preventDefault(); if(lpIdx>0){ lpIdx--; paintLpSel(true); } }
-  else if(e.key==="Enter"){ e.preventDefault(); if(lpItems[lpIdx]) chooseLink(lpItems[lpIdx].id); }
+  else if(e.key==="Enter"){ e.preventDefault(); if(lpItems[lpIdx]) chooseLink(lpItems[lpIdx]); }
   else if(e.key==="Escape"){ e.preventDefault(); closeLinkPicker(); editor.focus(); }
 });
 linkPick.addEventListener("mousedown", e => { if(e.target===linkPick) closeLinkPicker(); });
 
-function chooseLink(id){
-  const target = find(id);
+function chooseLink(item){
+  const target = item.url ? null : find(item.id);
   closeLinkPicker();
-  if(!target) return;
+  if(!item.url && !target) return;
+  const label = item.url || target.title;
   editor.focus();
   const sel = getSelection();
   sel.removeAllRanges();
@@ -964,21 +997,27 @@ function chooseLink(id){
     r.selectNodeContents(editor); r.collapse(false);
     sel.addRange(r);
   }
-  if(sel.isCollapsed){                      // nothing selected -> the title becomes the text
-    document.execCommand("insertText", false, target.title);
+  if(sel.isCollapsed){                      // nothing selected -> title/URL becomes the text
+    document.execCommand("insertText", false, label);
     const r = sel.getRangeAt(0).cloneRange();
-    r.setStart(r.endContainer, Math.max(0, r.endOffset - target.title.length));
+    r.setStart(r.endContainer, Math.max(0, r.endOffset - label.length));
     sel.removeAllRanges(); sel.addRange(r);
   }
   // createLink with a temp href, then rewrite every anchor it made (a selection
-  // across blocks produces several) into the notelink form
-  const token = "#notelink-pending";
+  // across blocks produces several) into the notelink / extlink form
+  const token = "#link-pending";
   document.execCommand("createLink", false, token);
   editor.querySelectorAll('a[href="'+token+'"]').forEach(a => {
-    a.removeAttribute("href");
-    a.className = "notelink";
-    a.dataset.note = id;
-    a.title = "Go to “"+target.title+"”";
+    if(item.url){
+      a.setAttribute("href", item.url);
+      a.className = "extlink";
+      a.title = "Open "+item.url+" in a new tab";
+    } else {
+      a.removeAttribute("href");
+      a.className = "notelink";
+      a.dataset.note = item.id;
+      a.title = "Go to “"+target.title+"”";
+    }
   });
   getSelection().collapseToEnd();
   markDirty(); syncToolbar(); updateWords();
@@ -986,8 +1025,17 @@ function chooseLink(id){
 $("#fLink").onmousedown = e => e.preventDefault();   // keep the editor selection
 $("#fLink").onclick = linkCommand;
 
-/* follow a link: click jumps to the note it points at */
+/* follow a link: click jumps to the note it points at, or opens the web page */
 editor.addEventListener("click", e => {
+  const x = e.target.closest("a.extlink");
+  if(x && editor.contains(x)){
+    e.preventDefault();
+    const url = urlFrom(x.getAttribute("href"));
+    if(url) window.open(url, "_blank", "noopener");
+    else showToast("That link isn’t a web address Sift will open. " +
+                   "Put the caret in it and press <span class='mono'>Ctrl+K</span> to remove it.");
+    return;
+  }
   const a = e.target.closest("a[data-note]");
   if(!a || !editor.contains(a)) return;
   e.preventDefault();
