@@ -20,6 +20,11 @@ For the best experience (in-place Save — see below), use **Chrome** or **Edge*
   note, task) plus a "marked" flag.
 - **Rich-text editor** per note: bold (`Ctrl+B`), bullet lists, and
   indent/outdent with `Tab` / `Shift+Tab`.
+- **Checklists**: the ☑ toolbar button starts a checkbox list (inside an
+  existing list, it switches that list between bullets and checkboxes). Click a
+  box to tick it. Items indented under a checkbox item get checkboxes too, and
+  the parent becomes locked (dashed box): it ticks itself once every child is
+  ticked, and unticks if any child is unticked or a new one is added.
 - **Note links**: select text and press `Ctrl+K` (or the 🔗 toolbar button) to
   link it to another note — a searchable picker chooses the target. With
   nothing selected, the target's title is inserted as the link text. Click a
@@ -84,7 +89,9 @@ is `<a class="notelink" data-note="id">text</a>`, where `data-note` is the
 target note's `id`. Ids are preserved on load so links survive save/open
 round-trips; a link whose target was deleted stays in the text and tells you
 so when clicked. A web link is `<a class="extlink" href="https://…">text</a>`;
-only `http`, `https`, and `mailto` addresses are opened.
+only `http`, `https`, and `mailto` addresses are opened. A checklist is
+`<ul class="checklist">`; a ticked item is `<li class="done">`, and a parent
+whose tick is derived from its children carries `class="locked"`.
 
 ## Browser support and caveats
 
