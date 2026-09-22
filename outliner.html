@@ -293,6 +293,18 @@
   .editor ul.checklist > li.locked::before{ border-style:dashed; cursor:default; background-color:var(--paper-2); }
   .editor ul.checklist > li.locked.done::before{ border-style:solid; background-color:var(--signal-ink); border-color:var(--signal-ink); }
   .editor ul.checklist > li.done{ color:#9a9384; text-decoration:line-through; text-decoration-color:#b7b0a1; }
+  /* fold arrow: an item with indented children can be collapsed, like the tree's twist */
+  .editor li.haskids{ position:relative; }
+  .editor li.haskids::after{
+    content:""; position:absolute; left:-2.55em; top:.5em; width:.6em; height:.6em;
+    background:#b7b0a1; cursor:pointer; text-decoration:none;
+    -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M3 1l5 4-5 4z'/%3E%3C/svg%3E") center/contain no-repeat;
+            mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M3 1l5 4-5 4z'/%3E%3C/svg%3E") center/contain no-repeat;
+    transform:rotate(90deg); transition:transform .14s ease;
+  }
+  .editor li.haskids:hover::after{ background:var(--signal-ink); }
+  .editor li.folded::after{ transform:none; background:var(--signal-ink); }
+  .editor ul.infold{ display:none; }
   .editor b, .editor strong{ font-weight:700; color:#1a1a15; }
   .editor code, .editor .mono{ font-family:var(--mono); font-size:.86em; background:var(--paper-2);
     padding:.05em .35em; border-radius:4px; }
@@ -831,7 +843,7 @@ function select(id){
   renderTree();
   pageTitle.textContent = n.title;
   editor.innerHTML = n.body || "";
-  rollChecks();
+  tidyLists();
   renderCrumbs();
   updateWords();
   syncToolbar();
@@ -860,8 +872,8 @@ function esc(s){ return s.replace(/[&<>]/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt
 
 /* ============================ formatting ============================ */
 editor.addEventListener("input", e => {
-  if(e.inputType==="insertParagraph"){ const li = liAtSelection(); if(li) li.classList.remove("done"); }
-  rollChecks(); markDirty(); updateWords();
+  if(e.inputType==="insertParagraph"){ const li = liAtSelection(); if(li) li.classList.remove("done","folded","haskids"); }
+  tidyLists(); markDirty(); updateWords();
 });
 pageTitle.addEventListener("input", () => { markDirty();
   const n=find(selId); if(n){ n.title=pageTitle.textContent.trim()||"Untitled"; }
@@ -874,6 +886,10 @@ $("#fIndent").onclick = () => cmd("indent");
 $("#fOutdent").onclick= () => cmd("outdent");
 
 editor.addEventListener("keydown", e => {
+  if(["Enter","Tab","Backspace","Delete"].includes(e.key)){   // don't restructure hidden children
+    const li = liAtSelection();
+    if(li && li.classList.contains("folded")){ li.classList.remove("folded"); rollFolds(); }
+  }
   if(e.key==="Tab"){ e.preventDefault(); cmd(e.shiftKey?"outdent":"indent"); }
   if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==="b"){ e.preventDefault(); cmd("bold"); }
   if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==="k"){ e.preventDefault(); linkCommand(); }
@@ -890,7 +906,9 @@ function syncToolbar(){
   }catch(e){}
 }
 function updateWords(){
-  const t = editor.innerText.trim();
+  const c = editor.cloneNode(true);         // not innerText: that skips folded (hidden) items
+  c.querySelectorAll("p,li,div,br").forEach(x => x.after(" "));
+  const t = c.textContent.trim();
   const w = t ? t.split(/\s+/).length : 0;
   $("#wcount").textContent = w + (w===1?" word":" words");
 }
@@ -934,6 +952,31 @@ function rollChecks(){
   });
   editor.querySelectorAll("[class='']").forEach(x => x.removeAttribute("class"));
 }
+/* folding: <li class="folded"> hides its child lists (marked class="infold");
+   class="haskids" marks items that have children and so show the arrow */
+function rollFolds(){
+  editor.querySelectorAll("ul.infold").forEach(u => u.classList.remove("infold"));
+  editor.querySelectorAll("li").forEach(li => {
+    const k = kidLists(li);
+    li.classList.toggle("haskids", k.length>0);
+    if(!k.length) li.classList.remove("folded");
+    else if(li.classList.contains("folded")) k.forEach(u => u.classList.add("infold"));
+  });
+  editor.querySelectorAll("[class='']").forEach(x => x.removeAttribute("class"));
+}
+function tidyLists(){ rollChecks(); rollFolds(); }
+function toggleFold(li){
+  li.classList.toggle("folded");
+  rollFolds();
+  const sel = getSelection();               // caret was inside what just got hidden -> end of the item
+  if(sel.rangeCount && kidLists(li).some(u => u.contains(sel.anchorNode))){
+    const r = document.createRange();
+    let last = li.lastChild;
+    while(last && last.nodeType===1 && last.tagName==="UL") last = last.previousSibling;
+    if(last) r.setEndAfter(last); else r.setEnd(li, 0);
+    r.collapse(false); sel.removeAllRanges(); sel.addRange(r);
+  }
+}
 function checkCommand(){
   editor.focus();
   const li = liAtSelection();
@@ -948,23 +991,28 @@ function checkCommand(){
       if(isCheck(u.parentElement.closest("ul"))) u.classList.add("bullets");
     } else { u.classList.remove("bullets"); u.classList.add("checklist"); }
   }
-  rollChecks(); markDirty(); syncToolbar();
+  tidyLists(); markDirty(); syncToolbar();
 }
 $("#fCheck").onmousedown = e => e.preventDefault();  // keep the editor selection
 $("#fCheck").onclick = checkCommand;
 
-/* the checkbox is the item's ::before, drawn left of the item's box */
-const boxHit = (li, e) => isCheck(li.parentNode) && e.clientX < li.getBoundingClientRect().left;
+/* the checkbox is the item's ::before and the fold arrow its ::after, both
+   drawn left of the item's box: the arrow furthest out, then the box/bullet */
+const leftOf = (li, e) => (li.getBoundingClientRect().left - e.clientX) / parseFloat(getComputedStyle(li).fontSize);
+const boxHit = (li, e) => isCheck(li.parentNode) && leftOf(li, e) > 0 && leftOf(li, e) < 1.6;
+const foldHit = (li, e) => li.classList.contains("haskids") && leftOf(li, e) >= 1.6 && leftOf(li, e) < 2.9;
 editor.addEventListener("mousedown", e => {
   const li = e.target.closest && e.target.closest("li");
-  if(!li || !editor.contains(li) || !boxHit(li, e)) return;
+  if(!li || !editor.contains(li)) return;
+  if(foldHit(li, e)){ e.preventDefault(); toggleFold(li); return; }
+  if(!boxHit(li, e)) return;
   e.preventDefault();                       // don't move the caret
   if(li.classList.contains("locked")){
     showToast("This item ticks itself once all of its sub-items are done.");
     return;
   }
   li.classList.toggle("done");
-  rollChecks(); markDirty();
+  tidyLists(); markDirty();
 });
 
 /* ============================ note links ============================ */
