@@ -20,11 +20,12 @@ For the best experience (in-place Save — see below), use **Chrome** or **Edge*
   note, task) plus a "marked" flag.
 - **Rich-text editor** per note: bold (`Ctrl+B`), bullet lists, and
   indent/outdent with `Tab` / `Shift+Tab`.
-- **Checklists**: the ☑ toolbar button starts a checkbox list (inside an
-  existing list, it switches that list between bullets and checkboxes). Click a
-  box to tick it. Items indented under a checkbox item get checkboxes too, and
-  the parent becomes locked (dashed box): it ticks itself once every child is
-  ticked, and unticks if any child is unticked or a new one is added.
+- **Checkboxes**: the ☑ toolbar button turns the current line — or every
+  selected line — into a checkbox item, or back into a plain bullet if they
+  already are. A list can mix bullets and checkboxes. Click a box to tick it.
+  Items indented under a checkbox item get checkboxes too, and the parent
+  becomes locked (dashed box): it ticks itself once every child is ticked, and
+  unticks if any child is unticked or a new one is added.
 - **Collapsible lists**: a bullet or checkbox item with indented children shows
   a ▾ arrow to its left, like the outline tree. Click it to fold the children
   away (▸) and again to show them. Folds are saved with the note; pressing
@@ -93,8 +94,8 @@ is `<a class="notelink" data-note="id">text</a>`, where `data-note` is the
 target note's `id`. Ids are preserved on load so links survive save/open
 round-trips; a link whose target was deleted stays in the text and tells you
 so when clicked. A web link is `<a class="extlink" href="https://…">text</a>`;
-only `http`, `https`, and `mailto` addresses are opened. A checklist is
-`<ul class="checklist">`; a ticked item is `<li class="done">`, and a parent
+only `http`, `https`, and `mailto` addresses are opened. A checkbox item is
+`<li class="check">`; a ticked one is `<li class="done">`, and a parent
 whose tick is derived from its children carries `class="locked"`. A folded
 item carries `class="folded"`.
 

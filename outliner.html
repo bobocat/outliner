@@ -275,24 +275,23 @@
   .editor p{ margin:0 0 .78em; }
   .editor ul{ margin:.2em 0 .9em; padding-left:1.4em; }
   .editor li{ margin:.14em 0; }
-  /* checklist: a bullet list whose items are checkboxes; lists nested in it
-     are checklists too. A parent item is locked — it ticks itself when every
-     child item is ticked. */
-  .editor ul.checklist{ list-style:none; padding-left:1.6em; }
-  .editor ul.checklist > li{ position:relative; }
-  .editor ul.checklist > li::before{
+  /* checkbox items: a list item with class "check" shows a box instead of a
+     bullet; items indented under it get one too. A parent item is locked — it
+     ticks itself when every child item is ticked. */
+  .editor li.check{ list-style:none; position:relative; }
+  .editor li.check::before{
     content:""; position:absolute; left:-1.45em; top:.28em; width:.95em; height:.95em;
     border:1.5px solid var(--rule-2); border-radius:3px; background:#fff; cursor:pointer;
     background-position:center; background-repeat:no-repeat; background-size:85%;
   }
-  .editor ul.checklist > li:not(.locked)::before:hover{ border-color:var(--signal); }
-  .editor ul.checklist > li.done::before{
+  .editor li.check:not(.locked)::before:hover{ border-color:var(--signal); }
+  .editor li.check.done::before{
     background-color:var(--signal); border-color:var(--signal);
     background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E");
   }
-  .editor ul.checklist > li.locked::before{ border-style:dashed; cursor:default; background-color:var(--paper-2); }
-  .editor ul.checklist > li.locked.done::before{ border-style:solid; background-color:var(--signal-ink); border-color:var(--signal-ink); }
-  .editor ul.checklist > li.done{ color:#9a9384; text-decoration:line-through; text-decoration-color:#b7b0a1; }
+  .editor li.check.locked::before{ border-style:dashed; cursor:default; background-color:var(--paper-2); }
+  .editor li.check.locked.done::before{ border-style:solid; background-color:var(--signal-ink); border-color:var(--signal-ink); }
+  .editor li.check.done{ color:#9a9384; text-decoration:line-through; text-decoration-color:#b7b0a1; }
   /* fold arrow: an item with indented children can be collapsed, like the tree's twist */
   .editor li.haskids{ position:relative; }
   .editor li.haskids::after{
@@ -530,7 +529,7 @@
         <button class="ebtn" id="fBullet" title="Bullet list">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="5" cy="7" r="1.4" fill="currentColor"/><circle cx="5" cy="12" r="1.4" fill="currentColor"/><circle cx="5" cy="17" r="1.4" fill="currentColor"/><path d="M10 7h10M10 12h10M10 17h10"/></svg>
         </button>
-        <button class="ebtn" id="fCheck" title="Checklist — inside a list, switches it between bullets and checkboxes">
+        <button class="ebtn" id="fCheck" title="Checkbox — turns checkboxes on or off for the current or selected lines">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="4" width="6" height="6" rx="1.2"/><path d="M4.4 16.6l1.5 1.5 2.8-3"/><path d="M12 7h8M12 17h8"/></svg>
         </button>
         <button class="ebtn" id="fLink" title="Link to a note or URL (Ctrl+K) — inside a link, removes it">
@@ -899,7 +898,7 @@ editor.addEventListener("mouseup", syncToolbar);
 function syncToolbar(){
   try{
     $("#fBold").classList.toggle("active", document.queryCommandState("bold"));
-    const li = liAtSelection(), ck = !!li && isCheck(li.parentNode);
+    const ck = isCheck(liAtSelection());
     $("#fBullet").classList.toggle("active", !ck && document.queryCommandState("insertUnorderedList"));
     $("#fCheck").classList.toggle("active", ck);
     $("#fLink").classList.toggle("active", !!linkAtSelection());
@@ -914,12 +913,13 @@ function updateWords(){
 }
 
 /* ============================ checklists ============================ */
-/* <ul class="checklist"> renders its items as checkboxes; a ticked item is
-   <li class="done">. Lists nested under a checklist become checklists too
-   (unless switched back to bullets, which marks them class="bullets").
-   An item with checklist children is "locked": its tick is derived — it is
-   done exactly when all of its children are — and clicking it does nothing. */
-const isCheck = u => !!u && u.tagName==="UL" && u.classList.contains("checklist");
+/* <li class="check"> renders as a checkbox; a ticked one is <li class="done">.
+   The checkbox is per item, so a list can mix bullets and checkboxes. Items
+   indented under a checkbox item become checkboxes too, unless switched back
+   to a bullet there (which marks them class="plain").
+   A checkbox item with checkbox children is "locked": its tick is derived —
+   it is done exactly when all of its children are — and clicking does nothing. */
+const isCheck = li => !!li && li.classList.contains("check");
 function liAtSelection(){
   const sel = getSelection();
   let n = sel.rangeCount ? sel.anchorNode : null;
@@ -936,19 +936,41 @@ function kidLists(li){
   for(let s=li.nextElementSibling; s && s.tagName==="UL"; s=s.nextElementSibling) out.push(s);
   return out;
 }
-const kidItems = li => kidLists(li).filter(isCheck).flatMap(u => [...u.children].filter(c => c.tagName==="LI"));
+const kidItems = li => kidLists(li).flatMap(u => [...u.children].filter(c => c.tagName==="LI"));
+/* the item a nested item hangs under (inverse of kidLists) */
+function parentItem(li){
+  const u = li.parentNode;
+  if(u.parentElement.tagName==="LI") return u.parentElement;
+  if(u.parentElement.tagName!=="UL") return null;
+  let s = u.previousElementSibling;
+  while(s && s.tagName==="UL") s = s.previousElementSibling;
+  return s && s.tagName==="LI" ? s : null;
+}
+/* list items whose own text the selection touches (just the caret's item when collapsed) */
+function selectedItems(){
+  const sel = getSelection();
+  if(!sel.rangeCount || !editor.contains(sel.anchorNode)) return [];
+  const r = sel.getRangeAt(0);
+  if(r.collapsed){ const li = liAtSelection(); return li ? [li] : []; }
+  return [...editor.querySelectorAll("li")].filter(li =>
+    [...li.childNodes].some(c => c.nodeName!=="UL" && r.intersectsNode(c)));
+}
 function rollChecks(){
-  editor.querySelectorAll("ul").forEach(u => {         // nested lists inherit (document order: parents first)
-    if(u.classList.contains("checklist") || u.classList.contains("bullets")) return;
-    if(isCheck(u.parentElement.closest("ul"))) u.classList.add("checklist");
+  editor.querySelectorAll("ul.checklist, ul.bullets").forEach(u => {   // older bodies kept it on the list
+    const c = u.classList.contains("checklist") ? "check" : "plain";
+    [...u.children].forEach(li => { if(li.tagName==="LI") li.classList.add(c); });
+    u.classList.remove("checklist","bullets");
   });
-  [...editor.querySelectorAll("ul.checklist > li")].reverse().forEach(li => {   // children before parents
-    const k = kidItems(li);
+  editor.querySelectorAll("li:not(.check):not(.plain)").forEach(li => {   // indented under a checkbox -> checkbox (parents first)
+    if(isCheck(parentItem(li))) li.classList.add("check");
+  });
+  [...editor.querySelectorAll("li.check")].reverse().forEach(li => {   // children before parents
+    const k = kidItems(li).filter(isCheck);
     li.classList.toggle("locked", k.length>0);
     if(k.length) li.classList.toggle("done", k.every(c => c.classList.contains("done")));
   });
   editor.querySelectorAll("li.done, li.locked").forEach(li => {
-    if(!isCheck(li.parentNode)) li.classList.remove("done","locked");
+    if(!isCheck(li)) li.classList.remove("done","locked");
   });
   editor.querySelectorAll("[class='']").forEach(x => x.removeAttribute("class"));
 }
@@ -979,18 +1001,17 @@ function toggleFold(li){
 }
 function checkCommand(){
   editor.focus();
-  const li = liAtSelection();
-  if(!li){                                  // not in a list -> start a checklist
+  let items = selectedItems();
+  if(!items.length){                        // not in a list -> make the line(s) list items first
     document.execCommand("insertUnorderedList");
-    const l = liAtSelection();
-    if(l){ l.parentNode.classList.remove("bullets"); l.parentNode.classList.add("checklist"); }
-  } else {
-    const u = li.parentNode;
-    if(isCheck(u)){                         // checklist -> bullets, along with lists nested in it
-      [u, ...u.querySelectorAll("ul.checklist")].forEach(x => x.classList.remove("checklist"));
-      if(isCheck(u.parentElement.closest("ul"))) u.classList.add("bullets");
-    } else { u.classList.remove("bullets"); u.classList.add("checklist"); }
+    items = selectedItems();
   }
+  const on = !items.every(isCheck);         // all checkboxes -> turn off, otherwise turn all on
+  items.forEach(li => {
+    if(on){ li.classList.add("check"); li.classList.remove("plain"); return; }
+    li.classList.remove("check","done","locked");
+    if(isCheck(parentItem(li))) li.classList.add("plain");   // or it would inherit the box again
+  });
   tidyLists(); markDirty(); syncToolbar();
 }
 $("#fCheck").onmousedown = e => e.preventDefault();  // keep the editor selection
@@ -999,7 +1020,7 @@ $("#fCheck").onclick = checkCommand;
 /* the checkbox is the item's ::before and the fold arrow its ::after, both
    drawn left of the item's box: the arrow furthest out, then the box/bullet */
 const leftOf = (li, e) => (li.getBoundingClientRect().left - e.clientX) / parseFloat(getComputedStyle(li).fontSize);
-const boxHit = (li, e) => isCheck(li.parentNode) && leftOf(li, e) > 0 && leftOf(li, e) < 1.6;
+const boxHit = (li, e) => isCheck(li) && leftOf(li, e) > 0 && leftOf(li, e) < 1.6;
 const foldHit = (li, e) => li.classList.contains("haskids") && leftOf(li, e) >= 1.6 && leftOf(li, e) < 2.9;
 editor.addEventListener("mousedown", e => {
   const li = e.target.closest && e.target.closest("li");
