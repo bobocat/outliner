@@ -894,6 +894,7 @@ function esc(s){ return s.replace(/[&<>]/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt
 
 /* ============================ formatting ============================ */
 editor.addEventListener("input", e => {
+  if(e.inputType==="insertUnorderedList") hoistLists();   // bullet / checkbox made from a paragraph
   if(e.inputType==="insertParagraph"){ const li = liAtSelection(); if(li) li.classList.remove("done","folded","haskids"); }
   tidyLists(); markDirty(); updateWords();
 });
@@ -1079,39 +1080,68 @@ function segs(el){
   if(out.length>1 && blank(out[out.length-1])) out.pop();
   return out;
 }
-/* make every visible line its own element, without changing how the page looks:
-   text typed straight into the editor sits in bare top-level nodes — box each run
-   in a <div> (what Chrome uses for later lines); a paragraph broken with <br>s (as
-   the OPML importer and Shift+Enter make) becomes one <div> per line, the last line
-   keeping the paragraph and its spacing */
-function lineUp(){
-  const kids = [...editor.childNodes];
-  const broken = kids.filter(n => n.nodeType===1 && /^(P|DIV)$/.test(n.tagName) && segs(n).length>1);
-  if(!broken.length && !kids.some(stray)) return;
+/* run fn, which reshuffles editor nodes, then put the caret back where it was —
+   moving a node resets any caret inside it. fn returns the elements whose child
+   offsets changed; a caret counted in one of those can't be restored. */
+function keepCaret(fn){
   const sel = getSelection(), r = sel.rangeCount && editor.contains(sel.anchorNode) ? sel.getRangeAt(0) : null;
   const keep = r && [r.startContainer, r.startOffset, r.endContainer, r.endOffset];
-  let box = null;
-  kids.forEach(n => {
-    if(n.nodeType===1 && BLOCK.test(n.tagName)){ box = null; return; }
-    if(!box){ if(!stray(n)) return; box = document.createElement("div"); editor.insertBefore(box, n); }
-    box.append(n);
-  });
-  broken.forEach(el => {
-    const ss = segs(el), last = ss.pop();
-    ss.forEach(s => {
-      const d = document.createElement("div");
-      d.append(...s);
-      if(blank(s)) d.append(document.createElement("br"));   // an empty line keeps its height
-      el.before(d);
-    });
-    [...el.childNodes].forEach(c => { if(!last.includes(c)) c.remove(); });
-    if(blank(last)) el.append(document.createElement("br"));
-  });
-  const moved = [editor, ...broken];        // their child offsets changed; text-node positions didn't
-  if(keep && !moved.includes(keep[0]) && !moved.includes(keep[2])){   // moving the nodes reset the caret: put it back
+  const moved = fn() || [];
+  if(keep && ![editor, ...moved].some(m => m===keep[0] || m===keep[2]) && editor.contains(keep[0]) && editor.contains(keep[2])){
     try{ const nr = document.createRange(); nr.setStart(keep[0], keep[1]); nr.setEnd(keep[2], keep[3]);
          sel.removeAllRanges(); sel.addRange(nr); }catch(_){}
   }
+}
+/* Chrome's insertUnorderedList (bullet / checkbox buttons) can leave the new list
+   inside the paragraph it came from — <div><ul>…</ul>next line</div> — gluing the
+   list and the lines after it into one block. Lift such lists to the top level,
+   splitting the paragraph around them. */
+function hoistLists(){
+  const hosts = [...editor.children].filter(el => /^(P|DIV)$/.test(el.tagName) && [...el.children].some(c => c.tagName==="UL"));
+  if(hosts.length) keepCaret(() => {
+    hosts.forEach(el => {
+      let run = [];
+      const flush = () => {                 // a run of text between lists keeps the paragraph's tag
+        if(!run.every(n => n.nodeName==="BR" || blank([n]))){ const b = el.cloneNode(false); b.append(...run); el.before(b); }
+        run = [];
+      };
+      [...el.childNodes].forEach(c => { if(c.nodeName==="UL"){ flush(); el.before(c); } else run.push(c); });
+      flush(); el.remove();
+    });
+    return hosts;
+  });
+}
+/* make every visible line its own element, without changing how the page looks:
+   lists stuck inside a paragraph are lifted out (hoistLists); text typed straight
+   into the editor sits in bare top-level nodes — box each run in a <div> (what
+   Chrome uses for later lines); a paragraph broken with <br>s (as the OPML importer
+   and Shift+Enter make) becomes one <div> per line, the last line keeping the
+   paragraph and its spacing */
+function lineUp(){
+  hoistLists();
+  const kids = [...editor.childNodes];
+  const broken = kids.filter(n => n.nodeType===1 && /^(P|DIV)$/.test(n.tagName) && segs(n).length>1);
+  if(!broken.length && !kids.some(stray)) return;
+  keepCaret(() => {
+    let box = null;
+    kids.forEach(n => {
+      if(n.nodeType===1 && BLOCK.test(n.tagName)){ box = null; return; }
+      if(!box){ if(!stray(n)) return; box = document.createElement("div"); editor.insertBefore(box, n); }
+      box.append(n);
+    });
+    broken.forEach(el => {
+      const ss = segs(el), last = ss.pop();
+      ss.forEach(s => {
+        const d = document.createElement("div");
+        d.append(...s);
+        if(blank(s)) d.append(document.createElement("br"));   // an empty line keeps its height
+        el.before(d);
+      });
+      [...el.childNodes].forEach(c => { if(!last.includes(c)) c.remove(); });
+      if(blank(last)) el.append(document.createElement("br"));
+    });
+    return broken;
+  });
 }
 /* the visible lines, top to bottom (folded children and the skip elements left out) */
 function lines(skip){
