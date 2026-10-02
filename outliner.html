@@ -1201,17 +1201,20 @@ grip.addEventListener("mousedown", e => {
   document.body.classList.add("linedrag");
   grip.classList.add("held");
 });
-/* where a drop would land: after line A (null = top), at depth d; y = where to draw it */
+/* where a drop would land: between lines A and B (either may be null), at depth d;
+   y = where to draw it. B keeps its parent, so d >= B's depth — except before the
+   first item of a top-level list, where a paragraph (0) fits too */
 function dropAt(e){
   const ls = lines(ldrag.unit);
   let i = ls.findIndex(l => { const b = ownBox(l); return e.clientY < (b.top + b.bottom)/2; });
   if(i<0) i = ls.length;
   const A = ls[i-1] || null, B = ls[i] || null;
-  const lo = B ? depthOf(B) : 0, hi = A ? depthOf(A)+1 : 0;
+  const db = B ? depthOf(B) : 0, da = A ? depthOf(A) : -1;
+  const lo = db===1 && da<=0 ? 0 : db, hi = A ? da+1 : db;
   const want = ldrag.depth + Math.round((e.clientX - ldrag.x) / indentPx());
   const d = Math.min(hi, Math.max(lo, want));
   const y = B ? ownBox(B).top - 2 : A ? A.getBoundingClientRect().bottom + 2 : editor.getBoundingClientRect().top + 20;
-  return { A, d, y };
+  return { A, B, d, y };
 }
 function trackDrop(){
   const e = ldrag.e, sr = scroller.getBoundingClientRect();
@@ -1228,7 +1231,7 @@ document.addEventListener("mouseup", () => {
   if(!ldrag) return;
   const drag = ldrag, s = drag.spot;
   endLineDrag();
-  if(s && !(s.A===drag.prev && s.d===drag.depth)) placeLine(drag, s.A, s.d);
+  if(s && !(s.A===drag.prev && s.d===drag.depth)) placeLine(drag, s.A, s.B, s.d);
 });
 document.addEventListener("keydown", e => {
   if(ldrag && e.key==="Escape"){ e.preventDefault(); e.stopPropagation(); endLineDrag(); }
@@ -1243,8 +1246,8 @@ function endLineDrag(){
   dropLine.style.display = "none";
   ldrag = null;
 }
-/* move the dragged line (and its children) to just after line A, at depth d */
-function placeLine({ el, unit }, A, d){
+/* move the dragged line (and its children) between lines A and B, at depth d */
+function placeLine({ el, unit }, A, B, d){
   let from = el.parentNode;
   unit.forEach(u => u.remove());
   let node = el, rest = [];
@@ -1260,7 +1263,8 @@ function placeLine({ el, unit }, A, d){
     let ref = A;
     while(ref && ref.parentNode!==editor) ref = ref.parentNode;
     ref ? ref.after(node, ...rest) : editor.prepend(node, ...rest);
-  } else if(A.tagName==="LI" && d<=depthOf(A)){   // sibling of A or of one of its ancestors
+  } else if(!A) B.parentNode.prepend(node);   // first item of the list at the very top
+  else if(A.tagName==="LI" && d<=depthOf(A)){   // sibling of A or of one of its ancestors
     let anc = A;
     while(anc && depthOf(anc)>d) anc = parentItem(anc);
     anc = anc || A;
