@@ -324,6 +324,26 @@
     content:"Empty page. Start typing, or press B for bold, • for a bullet, Tab to indent.";
     color:#b7b0a1; font-style:italic;
   }
+  /* ---------- line drag ---------- */
+  /* hover a line and a grip shows at the sheet's far left; drag it to move the
+     line (and what's indented under it). The drop line shows where it lands. */
+  .sheet{ position:relative; }
+  .lgrip{
+    position:absolute; left:14px; width:4px; height:18px; border-radius:2px;
+    background:var(--rule-2); cursor:grab; display:none; z-index:2;
+  }
+  .lgrip::before{ content:""; position:absolute; inset:-4px -8px; }   /* roomier hit area */
+  .lgrip:hover, .lgrip.held{ background:var(--signal); }
+  .ldrop{
+    position:absolute; height:2px; margin-top:-1px; display:none; pointer-events:none; z-index:2;
+    background:var(--signal); border-radius:2px; box-shadow:0 0 0 2px rgba(226,129,47,.25);
+  }
+  .ldrop::before{
+    content:""; position:absolute; left:-3px; top:-2px; width:6px; height:6px;
+    border-radius:50%; background:var(--signal);
+  }
+  .editor .ldragging{ opacity:.35; }
+  body.linedrag, body.linedrag *{ cursor:grabbing !important; user-select:none; }
 
   /* ---------- status bar ---------- */
   .status{
@@ -558,6 +578,8 @@
           <div class="sheet-title" id="pageTitle" contenteditable="true" spellcheck="false"></div>
           <div class="sheet-meta" id="pageMeta"></div>
           <div class="editor" id="editor" contenteditable="true" spellcheck="false"></div>
+          <div class="lgrip" id="lineGrip" title="Drag to move this line"></div>
+          <div class="ldrop" id="lineDrop"></div>
         </div>
       </div>
     </section>
@@ -842,6 +864,7 @@ function select(id){
   renderTree();
   pageTitle.textContent = n.title;
   editor.innerHTML = n.body || "";
+  showGrip(null);
   tidyLists();
   renderCrumbs();
   updateWords();
@@ -1035,6 +1058,179 @@ editor.addEventListener("mousedown", e => {
   li.classList.toggle("done");
   tidyLists(); markDirty();
 });
+
+/* ============================ line drag ============================ */
+/* Hover a line (paragraph or list item) and a grip shows at the far left of
+   the sheet; drag it to move the line together with everything indented under
+   it. The pointer's y picks the gap, its x the indent: drag sideways to nest
+   or outdent, from the depth of the line below up to one level under the line
+   above. Depth 0 = paragraph, 1 = top-level list item, 2 = nested, and so on. */
+const sheet = $(".sheet"), grip = $("#lineGrip"), dropLine = $("#lineDrop"), scroller = $(".scroll");
+let ldrag = null, gripLine = null;
+const BLOCK = /^(P|DIV|UL|OL|H[1-6]|BLOCKQUOTE|PRE|TABLE|HR)$/;
+const stray = n => n.nodeType===3 ? /\S/.test(n.data) : n.nodeType===1 && !BLOCK.test(n.tagName);
+const indentPx = () => parseFloat(getComputedStyle(editor).fontSize) * 1.4;   // = the ul's padding-left
+function depthOf(el){ let d = 0; for(let u = el.parentNode; u && u!==editor; u = u.parentNode) if(u.tagName==="UL") d++; return d; }
+/* text typed straight into the editor sits in bare top-level nodes; box each run in a
+   <div> (what Chrome uses for later lines) so every line is an element we can move */
+function wrapStray(){
+  const kids = [...editor.childNodes];
+  if(!kids.some(stray)) return;
+  const sel = getSelection(), r = sel.rangeCount && editor.contains(sel.anchorNode) ? sel.getRangeAt(0) : null;
+  const keep = r && [r.startContainer, r.startOffset, r.endContainer, r.endOffset];
+  let box = null;
+  kids.forEach(n => {
+    if(n.nodeType===1 && BLOCK.test(n.tagName)){ box = null; return; }
+    if(!box){ if(!stray(n)) return; box = document.createElement("div"); editor.insertBefore(box, n); }
+    box.append(n);
+  });
+  if(keep && keep[0]!==editor && keep[2]!==editor){   // moving the nodes collapsed the caret: put it back
+    try{ const nr = document.createRange(); nr.setStart(keep[0], keep[1]); nr.setEnd(keep[2], keep[3]);
+         sel.removeAllRanges(); sel.addRange(nr); }catch(_){}
+  }
+}
+/* the visible lines, top to bottom (folded children and the skip elements left out) */
+function lines(skip){
+  const out = [];
+  (function rec(box){
+    for(const c of box.children){
+      if(skip && skip.includes(c)) continue;
+      if(c.tagName==="UL"){ if(!c.classList.contains("infold")) rec(c); }
+      else if(c.tagName==="LI"){ out.push(c); rec(c); }
+      else if(box===editor) out.push(c);
+    }
+  })(editor);
+  return out;
+}
+/* a line's own box: an item's stops where its child list starts */
+function ownBox(el){
+  const r = el.getBoundingClientRect();
+  const u = el.tagName==="LI" && [...el.children].find(c => c.tagName==="UL" && !c.classList.contains("infold"));
+  return { top:r.top, bottom: u ? u.getBoundingClientRect().top : r.bottom };
+}
+function lineAtY(y){
+  let hit = null;
+  for(const l of lines()){
+    const b = ownBox(l);
+    if(b.top - 4 > y) break;
+    hit = y <= b.bottom + 14 ? l : null;
+  }
+  return hit;
+}
+function showGrip(l){
+  gripLine = l;
+  if(!l){ grip.style.display = "none"; return; }
+  grip.style.display = "block";
+  const b = ownBox(l), cs = getComputedStyle(l);
+  let lh = parseFloat(cs.lineHeight); if(lh < 4) lh *= parseFloat(cs.fontSize);
+  const h = Math.min(lh, b.bottom - b.top) || lh;
+  grip.style.top = (b.top - sheet.getBoundingClientRect().top + (h - grip.offsetHeight)/2) + "px";
+}
+sheet.addEventListener("mousemove", e => {
+  if(ldrag || e.target===grip) return;
+  wrapStray();
+  showGrip(lineAtY(e.clientY));
+});
+sheet.addEventListener("mouseleave", () => { if(!ldrag) showGrip(null); });
+editor.addEventListener("keydown", () => showGrip(null));
+
+grip.addEventListener("mousedown", e => {
+  if(e.button!==0 || !gripLine || !editor.contains(gripLine)) return;
+  e.preventDefault();                       // keep the editor's caret and focus
+  const el = gripLine, all = lines();
+  const unit = el.tagName==="LI" ? [el, ...kidLists(el).filter(u => u.parentNode!==el)] : [el];
+  unit.forEach(u => u.classList.add("ldragging"));
+  ldrag = { el, unit, depth:depthOf(el), prev:all[all.indexOf(el)-1] || null, x:e.clientX, e, spot:null, dir:0 };
+  ldrag.timer = setInterval(() => {        // auto-scroll while held near the top/bottom edge
+    if(ldrag && ldrag.dir){ scroller.scrollTop += ldrag.dir*14; trackDrop(); }
+  }, 30);
+  document.body.classList.add("linedrag");
+  grip.classList.add("held");
+});
+/* where a drop would land: after line A (null = top), at depth d; y = where to draw it */
+function dropAt(e){
+  const ls = lines(ldrag.unit);
+  let i = ls.findIndex(l => { const b = ownBox(l); return e.clientY < (b.top + b.bottom)/2; });
+  if(i<0) i = ls.length;
+  const A = ls[i-1] || null, B = ls[i] || null;
+  const lo = B ? depthOf(B) : 0, hi = A ? depthOf(A)+1 : 0;
+  const want = ldrag.depth + Math.round((e.clientX - ldrag.x) / indentPx());
+  const d = Math.min(hi, Math.max(lo, want));
+  const y = B ? ownBox(B).top - 2 : A ? A.getBoundingClientRect().bottom + 2 : editor.getBoundingClientRect().top + 20;
+  return { A, d, y };
+}
+function trackDrop(){
+  const e = ldrag.e, sr = scroller.getBoundingClientRect();
+  ldrag.dir = e.clientY < sr.top + 30 ? -1 : e.clientY > sr.bottom - 30 ? 1 : 0;
+  const s = ldrag.spot = dropAt(e);
+  const sh = sheet.getBoundingClientRect(), er = editor.getBoundingClientRect(), cs = getComputedStyle(editor);
+  const ind = indentPx();
+  const left = er.left + parseFloat(cs.paddingLeft) + s.d*ind - (s.d ? ind*0.8 : 0) - sh.left;
+  const right = er.right - parseFloat(cs.paddingRight) - sh.left;
+  Object.assign(dropLine.style, { display:"block", top:(s.y - sh.top)+"px", left:left+"px", width:(right-left)+"px" });
+}
+document.addEventListener("mousemove", e => { if(ldrag){ ldrag.e = e; trackDrop(); } });
+document.addEventListener("mouseup", () => {
+  if(!ldrag) return;
+  const drag = ldrag, s = drag.spot;
+  endLineDrag();
+  if(s && !(s.A===drag.prev && s.d===drag.depth)) placeLine(drag, s.A, s.d);
+});
+document.addEventListener("keydown", e => {
+  if(ldrag && e.key==="Escape"){ e.preventDefault(); e.stopPropagation(); endLineDrag(); }
+}, true);
+window.addEventListener("blur", () => { if(ldrag) endLineDrag(); });
+function endLineDrag(){
+  clearInterval(ldrag.timer);
+  ldrag.unit.forEach(u => u.classList.remove("ldragging"));
+  editor.querySelectorAll("[class='']").forEach(x => x.removeAttribute("class"));
+  document.body.classList.remove("linedrag");
+  grip.classList.remove("held");
+  dropLine.style.display = "none";
+  ldrag = null;
+}
+/* move the dragged line (and its children) to just after line A, at depth d */
+function placeLine({ el, unit }, A, d){
+  let from = el.parentNode;
+  unit.forEach(u => u.remove());
+  let node = el, rest = [];
+  if(d===0 && el.tagName==="LI"){           // item -> paragraph; its children follow as a list
+    node = document.createElement("p");
+    [...el.childNodes].forEach(c => c.nodeName==="UL" ? rest.push(c) : node.append(c));
+    rest.push(...unit.slice(1));
+  } else if(d>0 && el.tagName!=="LI"){      // paragraph -> list item
+    node = document.createElement("li");
+    node.append(...el.childNodes);
+  } else if(d>0) el.append(...unit.slice(1));   // children travel inside the item
+  if(d===0){
+    let ref = A;
+    while(ref && ref.parentNode!==editor) ref = ref.parentNode;
+    ref ? ref.after(node, ...rest) : editor.prepend(node, ...rest);
+  } else if(A.tagName==="LI" && d<=depthOf(A)){   // sibling of A or of one of its ancestors
+    let anc = A;
+    while(anc && depthOf(anc)>d) anc = parentItem(anc);
+    anc = anc || A;
+    (kidLists(anc).filter(u => u.parentNode!==anc).pop() || anc).after(node);
+  } else if(A.tagName==="LI"){              // first child of A
+    A.classList.remove("folded");
+    const k = kidLists(A)[0];
+    if(k) k.prepend(node);
+    else { const u = document.createElement("ul"); u.append(node); A.append(u); }
+  } else {                                  // first item of the list right after paragraph A
+    const nx = A.nextElementSibling;
+    if(nx && nx.tagName==="UL") nx.prepend(node);
+    else { const u = document.createElement("ul"); u.append(node); A.after(u); }
+  }
+  while(from && from!==editor && from.tagName==="UL" && !from.querySelector("li")){   // drop emptied lists
+    const up = from.parentNode; from.remove(); from = up;
+  }
+  [...editor.children].forEach(c => {       // rejoin top-level lists left side by side
+    const p = c.previousElementSibling;
+    if(c.tagName==="UL" && p && p.tagName==="UL"){ p.append(...c.childNodes); c.remove(); }
+  });
+  showGrip(null);
+  tidyLists(); markDirty(); updateWords(); syncToolbar();
+}
 
 /* ============================ note links ============================ */
 /* Body text can link to another note: <a class="notelink" data-note="id">,

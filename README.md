@@ -30,6 +30,12 @@ For the best experience (in-place Save — see below), use **Chrome** or **Edge*
   a ▾ arrow to its left, like the outline tree. Click it to fold the children
   away (▸) and again to show them. Folds are saved with the note; pressing
   Enter, Tab, Backspace or Delete in a folded item unfolds it first.
+- **Drag lines around**: hover a line in a note and a small grip appears at the
+  page's far left. Drag it to move the line — anything indented under it comes
+  along. Move sideways while dragging to change the indent (the drop marker
+  shows where it'll land); dragging a paragraph into a list makes it an item,
+  and dragging an item fully left makes it a paragraph. `Esc` cancels. (Not
+  undoable with `Ctrl+Z`.)
 - **Note links**: select text and press `Ctrl+K` (or the 🔗 toolbar button) to
   link it to another note — a searchable picker chooses the target. With
   nothing selected, the target's title is inserted as the link text. Click a
