@@ -23,7 +23,8 @@ For the best experience (in-place Save — see below), use **Chrome** or **Edge*
 - **Clean pasted text**: select text and press the T✕ toolbar button to strip
   formatting that came along with a paste (fonts, colours, sizes, headings,
   bold, foreign links), leaving plain text in the page font. Note and web links
-  are kept.
+  are kept, and so are line breaks and tabs (headings or code blocks pasted into
+  a list item become separate lines inside it).
 - **Checkboxes**: the ☑ toolbar button turns the current line — or every
   selected line — into a checkbox item, or back into a plain bullet if they
   already are. A list can mix bullets and checkboxes. Click a box to tick it.

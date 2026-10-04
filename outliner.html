@@ -273,6 +273,7 @@
   }
   .editor:focus{ outline:none; }
   .editor p{ margin:0 0 .78em; }
+  .editor .tab{ white-space:pre; }   /* a tab kept by Clean */
   .editor ul{ margin:.2em 0 .9em; padding-left:1.4em; }
   .editor li{ margin:.14em 0; }
   /* checkbox items: a list item with class "check" shows a box instead of a
@@ -914,17 +915,48 @@ $("#fOutdent").onclick= () => cmd("outdent");
 /* Clean: turn the selection back into plain text in the page font. Inline
    wrappers (span, font, b, i, …) are unwrapped, foreign links dropped (note and
    web links stay), headings / quotes / pre become paragraphs, and every element
-   the selection touches loses its style and other pasted attributes. */
+   the selection touches loses its style and other pasted attributes.
+   Whitespace that only showed because of a pasted white-space:pre style is kept:
+   newlines become <br>, runs of spaces become &nbsp;s and tabs become
+   <span class="tab">\t</span> (white-space:pre in the CSS). The selection is
+   tracked with two private-use marker characters, since the passes replace the
+   nodes its ends sit in. */
 const CLEAN_INLINE = /^(SPAN|FONT|B|STRONG|I|EM|U|S|STRIKE|SUB|SUP|CODE|SMALL|BIG|MARK|INS|DEL|Q|CITE|KBD|SAMP|TT|VAR|ABBR|DFN|LABEL|NOBR|O:P)$/;
 const CLEAN_BLOCK  = /^(H[1-6]|PRE|BLOCKQUOTE|ADDRESS|ARTICLE|SECTION|HEADER|FOOTER|CENTER|ASIDE|FIGURE|MAIN|NAV)$/;
+const CM_A = "\uE000", CM_B = "\uE001", CM_TAB = "\uE002";
 function unwrap(el){ el.replaceWith(...el.childNodes); }
+function textNodes(root){ const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT), out = []; while(w.nextNode()) out.push(w.currentNode); return out; }
+function markAt(ch){ for(const t of textNodes(editor)){ const i = t.data.indexOf(ch); if(i>=0) return [t, i]; } return null; }
+function cleanRange(){        // the range between the markers, also made the selection
+  const a = markAt(CM_A), b = markAt(CM_B), r = document.createRange();
+  r.setStart(a[0], a[1]+1); r.setEnd(b[0], b[1]);
+  getSelection().removeAllRanges(); getSelection().addRange(r); return r;
+}
 function cleanCommand(){
   const sel = getSelection();
   if(!sel.rangeCount || sel.isCollapsed || !editor.contains(sel.anchorNode)){ showToast("Select the text to clean first"); return; }
   editor.focus();
-  document.execCommand("removeFormat");          // splits partly-selected inline formatting cleanly
-  const r = sel.getRangeAt(0);
-  const a = [r.startContainer, r.startOffset], b = [r.endContainer, r.endOffset];
+  const r0 = sel.getRangeAt(0), end = r0.cloneRange(); end.collapse(false);
+  end.insertNode(document.createTextNode(CM_B)); r0.insertNode(document.createTextNode(CM_A));
+  let r = cleanRange();
+  // 1. whitespace the paste kept visible through white-space:pre (removeFormat would drop it)
+  // whole pre-styled elements, as removeFormat also strips the unselected rest of one
+  const preWs = el => /^(pre|pre-wrap|pre-line|break-spaces)$/.test(getComputedStyle(el).whiteSpace);
+  const todo = new Set();
+  [...editor.querySelectorAll("*")].filter(el => r.intersectsNode(el) && preWs(el)).forEach(el => textNodes(el).forEach(t => todo.add(t)));
+  [...todo].filter(t => /[\n\t]| {2}/.test(t.data)).forEach(t => {
+    if(!preWs(t.parentNode)) return;
+    const keepSp = getComputedStyle(t.parentNode).whiteSpace!=="pre-line", parts = t.data.split("\n"), frag = document.createDocumentFragment();
+    parts.forEach((x, k) => {
+      if(keepSp) x = x.replace(/\t/g, CM_TAB).replace(/ {2,}/g, m => "\u00a0 ".repeat(m.length).slice(0, m.length)).replace(/^ /, "\u00a0");
+      if(k) frag.append(document.createElement("br"));
+      if(x) frag.append(x);
+    });
+    t.replaceWith(frag);
+  });
+  // 2. inline formatting
+  cleanRange(); document.execCommand("removeFormat"); r = cleanRange();
+  // 3. elements: unwrap wrappers, strip attributes, flatten odd blocks
   const inside = el => { const t = document.createRange(); t.selectNodeContents(el);
     return r.compareBoundaryPoints(Range.START_TO_START, t) <= 0 && r.compareBoundaryPoints(Range.END_TO_END, t) >= 0; };
   const hit = [...editor.querySelectorAll("*")].filter(el => r.intersectsNode(el))
@@ -937,11 +969,29 @@ function cleanCommand(){
       if(!keep) el.removeAttribute(at.name);
     });
     if(CLEAN_BLOCK.test(tag)){
-      if(el.closest("li, p")) unwrap(el);
+      if(el.closest("li, p")){         // keep it on its own line(s)
+        if(el.previousSibling && el.previousSibling.nodeName!=="BR") el.before(document.createElement("br"));
+        if(el.nextSibling) el.after(document.createElement("br"));
+        unwrap(el);
+      }
       else { const p = document.createElement("p"); p.append(...el.childNodes); el.replaceWith(p); }
     }
   });
-  try{ if(a[0].isConnected && b[0].isConnected) sel.setBaseAndExtent(a[0], a[1], b[0], b[1]); }catch(e){}
+  // 4. tabs back as real (white-space:pre) tabs
+  textNodes(editor).filter(t => t.data.includes(CM_TAB)).forEach(t => {
+    const frag = document.createDocumentFragment();
+    t.data.split(CM_TAB).forEach((x, k) => {
+      if(k){ const s = document.createElement("span"); s.className = "tab"; s.textContent = "\t"; frag.append(s); }
+      if(x) frag.append(x);
+    });
+    t.replaceWith(frag);
+  });
+  // 5. drop the markers, select what was cleaned
+  const [bn, bo] = markAt(CM_B); bn.deleteData(bo, 1);
+  const [an, ao] = markAt(CM_A); an.deleteData(ao, 1);
+  try{ sel.setBaseAndExtent(an, ao, bn, an===bn ? bo-1 : bo); }catch(e){}
+  editor.querySelectorAll("span:not(.tab), font, b, strong, i, em, u").forEach(el => {   // shells removeFormat leaves (the live selection follows)
+    if(!el.textContent && !el.querySelector("br, img")) el.remove(); });
   tidyLists(); markDirty(); syncToolbar(); updateWords();
 }
 $("#fClean").onclick = cleanCommand;
