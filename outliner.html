@@ -555,6 +555,9 @@
         <button class="ebtn" id="fLink" title="Link to a note or URL (Ctrl+K) — inside a link, removes it">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M10 14a4.5 4.5 0 0 0 6.4 0l3.2-3.2a4.5 4.5 0 0 0-6.4-6.4L11.5 6"/><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3.2 3.2a4.5 4.5 0 0 0 6.4 6.4l1.7-1.6"/></svg>
         </button>
+        <button class="ebtn" id="fClean" title="Clean — strips pasted formatting (fonts, colours, sizes, styles, bold…) from the selected text">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M5 5h11M10.5 5v14"/><path d="M15 14l5 5M20 14l-5 5"/></svg>
+        </button>
         <div class="edivide"></div>
         <button class="ebtn" id="fOutdent" title="Outdent (Shift+Tab)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M20 6H10M20 12H13M20 18H10M7 9l-3 3 3 3"/></svg>
@@ -907,6 +910,41 @@ $("#fBold").onclick   = () => cmd("bold");
 $("#fBullet").onclick = () => cmd("insertUnorderedList");
 $("#fIndent").onclick = () => cmd("indent");
 $("#fOutdent").onclick= () => cmd("outdent");
+
+/* Clean: turn the selection back into plain text in the page font. Inline
+   wrappers (span, font, b, i, …) are unwrapped, foreign links dropped (note and
+   web links stay), headings / quotes / pre become paragraphs, and every element
+   the selection touches loses its style and other pasted attributes. */
+const CLEAN_INLINE = /^(SPAN|FONT|B|STRONG|I|EM|U|S|STRIKE|SUB|SUP|CODE|SMALL|BIG|MARK|INS|DEL|Q|CITE|KBD|SAMP|TT|VAR|ABBR|DFN|LABEL|NOBR|O:P)$/;
+const CLEAN_BLOCK  = /^(H[1-6]|PRE|BLOCKQUOTE|ADDRESS|ARTICLE|SECTION|HEADER|FOOTER|CENTER|ASIDE|FIGURE|MAIN|NAV)$/;
+function unwrap(el){ el.replaceWith(...el.childNodes); }
+function cleanCommand(){
+  const sel = getSelection();
+  if(!sel.rangeCount || sel.isCollapsed || !editor.contains(sel.anchorNode)){ showToast("Select the text to clean first"); return; }
+  editor.focus();
+  document.execCommand("removeFormat");          // splits partly-selected inline formatting cleanly
+  const r = sel.getRangeAt(0);
+  const a = [r.startContainer, r.startOffset], b = [r.endContainer, r.endOffset];
+  const inside = el => { const t = document.createRange(); t.selectNodeContents(el);
+    return r.compareBoundaryPoints(Range.START_TO_START, t) <= 0 && r.compareBoundaryPoints(Range.END_TO_END, t) >= 0; };
+  const hit = [...editor.querySelectorAll("*")].filter(el => r.intersectsNode(el))
+    .map(el => ({ el, all: inside(el) })).reverse();          // children before parents
+  hit.forEach(({ el, all }) => {
+    const tag = el.tagName, ours = tag==="A" && el.matches("a[data-note], a.extlink");
+    if(all && (CLEAN_INLINE.test(tag) || (tag==="A" && !ours))){ unwrap(el); return; }
+    [...el.attributes].forEach(at => {
+      const keep = (at.name==="class" && /^(LI|UL|A)$/.test(tag)) || (ours && /^(href|data-note)$/.test(at.name));
+      if(!keep) el.removeAttribute(at.name);
+    });
+    if(CLEAN_BLOCK.test(tag)){
+      if(el.closest("li, p")) unwrap(el);
+      else { const p = document.createElement("p"); p.append(...el.childNodes); el.replaceWith(p); }
+    }
+  });
+  try{ if(a[0].isConnected && b[0].isConnected) sel.setBaseAndExtent(a[0], a[1], b[0], b[1]); }catch(e){}
+  tidyLists(); markDirty(); syncToolbar(); updateWords();
+}
+$("#fClean").onclick = cleanCommand;
 
 editor.addEventListener("keydown", e => {
   if(["Enter","Tab","Backspace","Delete"].includes(e.key)){   // don't restructure hidden children
