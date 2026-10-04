@@ -915,7 +915,8 @@ $("#fOutdent").onclick= () => cmd("outdent");
 /* Clean: turn the selection back into plain text in the page font. Inline
    wrappers (span, font, b, i, …) are unwrapped, foreign links dropped (note and
    web links stay), headings / quotes / pre become paragraphs, and every element
-   the selection touches loses its style and other pasted attributes.
+   the selection touches loses its style and other pasted attributes (line
+   height and margins included, and pasted one-<p>-per-line runs become plain lines).
    Whitespace that only showed because of a pasted white-space:pre style is kept:
    newlines become <br>, runs of spaces become &nbsp;s and tabs become
    <span class="tab">\t</span> (white-space:pre in the CSS). The selection is
@@ -1054,8 +1055,17 @@ function cleanCommand(){
       else { const p = document.createElement("p"); p.append(...el.childNodes); el.replaceWith(p); }
     }
   });
+  editor.querySelectorAll("span, font").forEach(el => { if(!el.attributes.length) unwrap(el); });   // bare wrappers do nothing
   // 3b. code blocks: one line per element, indentation that follows the braces
   cleanCode(cleanRange());
+  // 3c. default line spacing: pasted lines arrive as one <p> each (margins zeroed by the
+  //     styles just stripped), so all but the last of a selected run become plain
+  //     <div> lines, as typed lines are; a <p> inside an item always does
+  const r3 = cleanRange(), ps = [...editor.querySelectorAll("p")].filter(p => r3.intersectsNode(p));
+  ps.forEach(p => {
+    if(p.parentNode===editor && !ps.includes(p.nextElementSibling)) return;
+    const d = document.createElement("div"); d.append(...p.childNodes); p.replaceWith(d);
+  });
   // 4. tabs back as real (white-space:pre) tabs
   textNodes(editor).filter(t => t.data.includes(CM_TAB)).forEach(t => {
     const frag = document.createDocumentFragment();

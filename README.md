@@ -22,7 +22,9 @@ For the best experience (in-place Save — see below), use **Chrome** or **Edge*
   indent/outdent with `Tab` / `Shift+Tab`.
 - **Clean pasted text**: select text and press the T✕ toolbar button to strip
   formatting that came along with a paste (fonts, colours, sizes, headings,
-  bold, foreign links), leaving plain text in the page font. Note and web links
+  bold, line spacing, foreign links), leaving plain text in the page font and
+  default line spacing (lines pasted as separate paragraphs lose the extra gap
+  between them). Note and web links
   are kept, and so are line breaks and tabs (headings or code blocks pasted into
   a list item become separate lines inside it).
   If the selection looks like code with `{ }` blocks, each line is kept on its
