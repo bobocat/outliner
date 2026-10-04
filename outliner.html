@@ -932,6 +932,83 @@ function cleanRange(){        // the range between the markers, also made the se
   r.setStart(a[0], a[1]+1); r.setEnd(b[0], b[1]);
   getSelection().removeAllRanges(); getSelection().addRange(r); return r;
 }
+/* Code: when the cleaned lines read like brace-structured code ({ … } blocks),
+   they are rebuilt one <div> per line (last one a <p>, as lineUp does) with the
+   indentation fixed. Indentation that already follows the bracket nesting is
+   kept as it is; otherwise (lost to stripped margins, or flattened at the
+   source) it is redone with one tab per level. */
+function tabSpan(){ const s = document.createElement("span"); s.className = "tab"; s.textContent = "\t"; return s; }
+function codeLines(nodes){       // plain text lines of top-level blocks: <br> and block edges break
+  const ls = [""], blk = /^(P|DIV|LI|PRE|BLOCKQUOTE|TR|UL|OL|H[1-6])$/;
+  const walk = n => {
+    if(n.nodeType===3){
+      if(/^\s*$/.test(n.data) && /[\r\n]/.test(n.data)) return;   // source formatting between tags
+      ls[ls.length-1] += n.data.replace(/[\r\n]+/g, " ").replace(/[\uE000\uE001]/g, "").replace(/\uE002/g, "\t").replace(/\u00a0/g, " ");
+    }
+    else if(n.nodeName==="BR") ls.push("");
+    else if(n.nodeType===1){
+      const b = blk.test(n.nodeName);
+      if(b && ls[ls.length-1]!=="") ls.push("");
+      n.childNodes.forEach(walk);
+      if(b && ls[ls.length-1]!=="") ls.push("");
+    }
+  };
+  nodes.forEach(walk);
+  if(ls.length>1 && ls[ls.length-1]==="") ls.pop();
+  return ls;
+}
+function isCode(ls){
+  const t = ls.map(l => l.trim()).filter(Boolean), all = t.join("");
+  const o = all.split("{").length-1, c = all.split("}").length-1;
+  return t.length>=2 && o>0 && c>0 && Math.abs(o-c)<=1 && t.some(l => /\{$/.test(l) || /^\}/.test(l));
+}
+function codeDepths(ls){         // nesting level of each line by { ( [ — skipping strings and comments
+  let d = 0, cm = false, q = null;
+  return ls.map(l => {
+    const t = l.trim(); if(!t) return 0;
+    const lead = (t.match(/^[)\]}][)\]}\s,;]*/)||[""])[0].replace(/[^)\]}]/g, "").length;
+    const here = cm || q ? d : Math.max(0, d-lead);
+    for(let i=0; i<t.length; i++){
+      const ch = t[i], nx = t[i+1];
+      if(cm){ if(ch==="*" && nx==="/"){ cm = false; i++; } continue; }
+      if(q){ if(ch==="\\") i++; else if(ch===q) q = null; continue; }
+      if(ch==="/" && nx==="/") break;
+      if(ch==="/" && nx==="*"){ cm = true; i++; continue; }
+      if(ch==='"' || ch==="'" || ch==="`") q = ch;
+      else if("{([".includes(ch)) d++;
+      else if(")]}".includes(ch)) d = Math.max(0, d-1);
+    }
+    if(q!=="`") q = null;        // only template strings run across lines
+    return here;
+  });
+}
+function indentOk(ls, deps){     // deeper nesting always sits further right (continuation lines may add more)
+  const by = {};
+  ls.forEach((l, i) => { if(!l.trim()) return;
+    const w = [...l.match(/^[ \t]*/)[0]].reduce((s, ch) => s + (ch==="\t" ? 4 : 1), 0);
+    (by[deps[i]] ||= []).push(w); });
+  const ds = Object.keys(by).map(Number).sort((a, b) => a-b);
+  return ds.every((d, k) => !k || Math.max(...by[ds[k-1]]) < Math.min(...by[d]));
+}
+function codeNode(line, tag){
+  const el = document.createElement(tag);
+  if(!line.trim()){ el.append(document.createElement("br")); return el; }
+  const [, lead, rest] = line.match(/^([ \t]*)(.*)$/);
+  const s = lead.replace(/ /g, "\u00a0") + rest.replace(/ {2,}/g, m => "\u00a0 ".repeat(m.length).slice(0, m.length));
+  s.split("\t").forEach((x, k) => { if(k) el.append(tabSpan()); if(x) el.append(x); });
+  return el;
+}
+function cleanCode(r){
+  const top = [...editor.childNodes].filter(n => r.intersectsNode(n));
+  if(!top.length || !top.every(n => n.nodeType===3 || /^(P|DIV)$/.test(n.nodeName))) return;
+  const ls = codeLines(top);
+  if(!isCode(ls)) return;
+  const deps = codeDepths(ls);
+  const fixed = indentOk(ls, deps) ? ls : ls.map((l, i) => l.trim() ? "\t".repeat(deps[i]) + l.trim() : "");
+  const out = fixed.map((l, i) => codeNode(l, i===fixed.length-1 ? "p" : "div"));
+  out[0].prepend(CM_A); out[out.length-1].append(CM_B);
+  top[0].before(...out); top.forEach(n => n.remove());
+}
 function cleanCommand(){
   const sel = getSelection();
   if(!sel.rangeCount || sel.isCollapsed || !editor.contains(sel.anchorNode)){ showToast("Select the text to clean first"); return; }
@@ -977,11 +1054,13 @@ function cleanCommand(){
       else { const p = document.createElement("p"); p.append(...el.childNodes); el.replaceWith(p); }
     }
   });
+  // 3b. code blocks: one line per element, indentation that follows the braces
+  cleanCode(cleanRange());
   // 4. tabs back as real (white-space:pre) tabs
   textNodes(editor).filter(t => t.data.includes(CM_TAB)).forEach(t => {
     const frag = document.createDocumentFragment();
     t.data.split(CM_TAB).forEach((x, k) => {
-      if(k){ const s = document.createElement("span"); s.className = "tab"; s.textContent = "\t"; frag.append(s); }
+      if(k) frag.append(tabSpan());
       if(x) frag.append(x);
     });
     t.replaceWith(frag);

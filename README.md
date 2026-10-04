@@ -25,6 +25,10 @@ For the best experience (in-place Save — see below), use **Chrome** or **Edge*
   bold, foreign links), leaving plain text in the page font. Note and web links
   are kept, and so are line breaks and tabs (headings or code blocks pasted into
   a list item become separate lines inside it).
+  If the selection looks like code with `{ }` blocks, each line is kept on its
+  own and the indentation is checked against the bracket nesting: indentation
+  that already fits is left alone, and lost or broken indentation is rebuilt
+  with one tab per level.
 - **Checkboxes**: the ☑ toolbar button turns the current line — or every
   selected line — into a checkbox item, or back into a plain bullet if they
   already are. A list can mix bullets and checkboxes. Click a box to tick it.
